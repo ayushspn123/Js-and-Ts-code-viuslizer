@@ -7,6 +7,8 @@ import { ModuleKind, ScriptTarget, transpileModule } from 'typescript'
 import './App.css'
 import { languagePresets } from './data/presets'
 import { generateExecutionTrace } from './engine/traceEngine'
+import QueryLab from './components/QueryLab'
+import NodeApiLab from './components/NodeApiLab'
 import type { ExecutionTrace, RuntimeVariable, SupportedLanguage } from './types'
 
 type RunSummary = {
@@ -97,6 +99,8 @@ function buildSparklinePoints(samples: number[], width = 160, height = 34): stri
 }
 
 type ExecutionMode = 'trace' | 'instant'
+type MemoryLens = 'stack' | 'heap' | 'structures'
+type WorkspaceTab = 'runtime' | 'query' | 'node'
 
 type InstantRunState = {
   status: 'idle' | 'running' | 'success' | 'error' | 'timeout'
@@ -274,6 +278,7 @@ function buildRunSummary(trace: ExecutionTrace, code: string, language: Supporte
 }
 
 function App() {
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('runtime')
   const [language, setLanguage] = useState<SupportedLanguage>('javascript')
   const [code, setCode] = useState(languagePresets.javascript.code)
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('instant')
@@ -306,6 +311,7 @@ function App() {
     error: null,
   })
   const [isFormatting, setIsFormatting] = useState(false)
+  const [memoryLens, setMemoryLens] = useState<MemoryLens>('stack')
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null)
   const decorationsRef = useRef<string[]>([])
@@ -946,6 +952,65 @@ function App() {
     return ['all', ...activeSnapshot.stackMemory.map((frame) => frame.name)]
   }, [activeSnapshot])
 
+  const memoryLensCounts = useMemo(() => {
+    return {
+      stack: activeSnapshot?.callStack.length ?? 0,
+      heap: activeSnapshot?.heapMemory.length ?? 0,
+      structures: activeSnapshot?.structures.length ?? 0,
+    }
+  }, [activeSnapshot])
+
+  const stackTowerFrames = useMemo(() => {
+    if (!activeSnapshot) {
+      return [] as { name: string; line: number; variableCount: number; level: number }[]
+    }
+
+    return activeSnapshot.callStack.map((frame, index) => ({
+      name: frame.name,
+      line: frame.line,
+      variableCount: frame.variables.length,
+      level: index + 1,
+    }))
+  }, [activeSnapshot])
+
+  const structureFlavorCounts = useMemo(() => {
+    const counts = {
+      array: 0,
+      object: 0,
+      struct: 0,
+    }
+
+    activeSnapshot?.structures.forEach((entry) => {
+      counts[entry.type] += 1
+    })
+
+    return counts
+  }, [activeSnapshot])
+
+  useEffect(() => {
+    if (!activeSnapshot) {
+      return
+    }
+
+    if (memoryLensCounts[memoryLens] > 0) {
+      return
+    }
+
+    if (memoryLensCounts.stack > 0) {
+      setMemoryLens('stack')
+      return
+    }
+
+    if (memoryLensCounts.heap > 0) {
+      setMemoryLens('heap')
+      return
+    }
+
+    if (memoryLensCounts.structures > 0) {
+      setMemoryLens('structures')
+    }
+  }, [activeSnapshot, memoryLens, memoryLensCounts])
+
   const stepNarrative = useMemo(() => {
     if (!activeSnapshot) {
       return [] as string[]
@@ -1425,7 +1490,28 @@ function App() {
         </div>
       </header>
 
-      <main className="layout">
+      <nav className="workspace-tabs" aria-label="Workspace tabs">
+        <button
+          className={workspaceTab === 'runtime' ? 'active' : ''}
+          onClick={() => setWorkspaceTab('runtime')}
+        >
+          Runtime Lab
+        </button>
+        <button
+          className={workspaceTab === 'query' ? 'active' : ''}
+          onClick={() => setWorkspaceTab('query')}
+        >
+          Query Lab
+        </button>
+        <button
+          className={workspaceTab === 'node' ? 'active' : ''}
+          onClick={() => setWorkspaceTab('node')}
+        >
+          Node API Lab
+        </button>
+      </nav>
+
+      {workspaceTab === 'runtime' ? <main className="layout">
         <section className="panel editor-panel">
           <div className="panel-title">
             <h2>Editor</h2>
@@ -2052,56 +2138,136 @@ function App() {
           )}
 
           <div className="viz-group">
-            <h3>Call Stack</h3>
-            <div className="stack-list">
-              {(activeSnapshot?.callStack ?? []).length === 0 ? (
-                <p className="empty">Run execution to view call frames.</p>
-              ) : (
-                activeSnapshot?.callStack
-                  .slice()
-                  .reverse()
-                  .map((frame) => (
-                    <motion.div
-                      key={`${frame.name}-${frame.line}-${frame.variables.length}`}
-                      className="stack-item"
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.25 }}
-                    >
-                      <div className="row">
-                        <strong>{frame.name}</strong>
-                        <span>line {frame.line}</span>
-                      </div>
-                    </motion.div>
-                  ))
-              )}
+            <div className="memory-theater-header">
+              <h3>Memory Theater</h3>
+              <span className="phase-chip">focused view</span>
             </div>
-          </div>
+            <p className="small memory-theater-copy">
+              Switch lenses to inspect only the model you care about: stack frames, heap cells, or higher-level structures.
+            </p>
+            <div className="memory-lens-switch" role="tablist" aria-label="Memory visualization lens">
+              <button
+                className={memoryLens === 'stack' ? 'active' : ''}
+                onClick={() => setMemoryLens('stack')}
+                role="tab"
+                aria-selected={memoryLens === 'stack'}
+              >
+                Stack ({memoryLensCounts.stack})
+              </button>
+              <button
+                className={memoryLens === 'heap' ? 'active' : ''}
+                onClick={() => setMemoryLens('heap')}
+                role="tab"
+                aria-selected={memoryLens === 'heap'}
+              >
+                Heap ({memoryLensCounts.heap})
+              </button>
+              <button
+                className={memoryLens === 'structures' ? 'active' : ''}
+                onClick={() => setMemoryLens('structures')}
+                role="tab"
+                aria-selected={memoryLens === 'structures'}
+              >
+                Structures ({memoryLensCounts.structures})
+              </button>
+            </div>
 
-          <div className="viz-group">
-            <h3>Stack Memory (Variables by Scope)</h3>
-            <div className="scope-filter">
-              <label>
-                Scope
-                <select value={selectedScope} onChange={(event) => setSelectedScope(event.target.value)}>
-                  {scopeOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {(activeSnapshot?.stackMemory ?? []).map((frame) => (
-              <div key={`${frame.name}-${frame.line}`} className="memory-frame">
-                <h4>{frame.name}</h4>
-                {renderVariables(
-                  selectedScope === 'all'
-                    ? frame.variables
-                    : frame.variables.filter((variable) => variable.scope === selectedScope),
+            {memoryLens === 'stack' ? (
+              <>
+                <div className="stack-tower">
+                  {stackTowerFrames.length === 0 ? (
+                    <p className="empty">Run execution to view stack frames in tower order.</p>
+                  ) : (
+                    stackTowerFrames
+                      .slice()
+                      .reverse()
+                      .map((frame, index) => (
+                        <motion.article
+                          key={`${frame.name}-${frame.line}-${frame.level}`}
+                          className="stack-layer"
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.22, delay: index * 0.03 }}
+                        >
+                          <div className="row">
+                            <strong>{frame.name}</strong>
+                            <span>level {frame.level}</span>
+                          </div>
+                          <div className="row small">
+                            <span>line {frame.line}</span>
+                            <span>{frame.variableCount} variable(s)</span>
+                          </div>
+                        </motion.article>
+                      ))
+                  )}
+                </div>
+
+                <div className="scope-filter">
+                  <label>
+                    Scope
+                    <select value={selectedScope} onChange={(event) => setSelectedScope(event.target.value)}>
+                      {scopeOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {(activeSnapshot?.stackMemory ?? []).map((frame) => (
+                  <div key={`${frame.name}-${frame.line}`} className="memory-frame">
+                    <h4>{frame.name}</h4>
+                    {renderVariables(
+                      selectedScope === 'all'
+                        ? frame.variables
+                        : frame.variables.filter((variable) => variable.scope === selectedScope),
+                    )}
+                  </div>
+                ))}
+              </>
+            ) : null}
+
+            {memoryLens === 'heap' ? (
+              <div className="heap-matrix">
+                {(activeSnapshot?.heapMemory ?? []).length === 0 ? (
+                  <p className="empty">No heap allocations yet.</p>
+                ) : (
+                  activeSnapshot?.heapMemory.map((entry) => (
+                    <article key={entry.address} className="heap-cell">
+                      <p className="heap-address">{entry.address}</p>
+                      <p className="heap-type">{entry.type}</p>
+                      <p className="heap-value">{entry.value}</p>
+                    </article>
+                  ))
                 )}
               </div>
-            ))}
+            ) : null}
+
+            {memoryLens === 'structures' ? (
+              <>
+                <div className="structure-totals">
+                  <p>Arrays: {structureFlavorCounts.array}</p>
+                  <p>Objects: {structureFlavorCounts.object}</p>
+                  <p>Structs: {structureFlavorCounts.struct}</p>
+                </div>
+                {(activeSnapshot?.structures ?? []).length === 0 ? (
+                  <p className="empty">No arrays, objects, or structs tracked yet.</p>
+                ) : (
+                  <div className="heap-list structure-grid">
+                    {activeSnapshot?.structures.map((structure) => (
+                      <div key={`${structure.address}-${structure.name}`} className="heap-item structure-card">
+                        <div className="row">
+                          <strong>{structure.name}</strong>
+                          <span className="type">{structure.type}</span>
+                        </div>
+                        <p>{structure.address}</p>
+                        <p>{structure.preview}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : null}
           </div>
 
           <div className="viz-group">
@@ -2185,41 +2351,49 @@ function App() {
             )}
           </div>
 
-          <div className="viz-group">
-            <h3>Heap Memory</h3>
-            {(activeSnapshot?.heapMemory ?? []).length === 0 ? (
-              <p className="empty">No heap allocations yet.</p>
-            ) : (
-              <div className="heap-list">
-                {activeSnapshot?.heapMemory.map((entry) => (
-                  <div key={entry.address} className="heap-item">
-                    <p>{entry.address}</p>
-                    <p>{entry.type}</p>
-                    <p>{entry.value}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="viz-group">
-            <h3>Data Structures</h3>
-            {(activeSnapshot?.structures ?? []).length === 0 ? (
-              <p className="empty">No arrays/objects/structs tracked yet.</p>
-            ) : (
-              <div className="heap-list">
-                {activeSnapshot?.structures.map((structure) => (
-                  <div key={`${structure.address}-${structure.name}`} className="heap-item">
-                    <p>{structure.name}</p>
-                    <p>{structure.type}</p>
-                    <p>{structure.preview}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </section>
-      </main>
+      </main> : null}
+
+      {workspaceTab === 'query' ? <QueryLab /> : null}
+      {workspaceTab === 'node' ? <NodeApiLab /> : null}
+
+      {workspaceTab === 'runtime' && onboardingOpen && (
+        <div className="tour-overlay" role="dialog" aria-modal="true" aria-label="Guided onboarding tour">
+          <motion.div
+            className="tour-card"
+            initial={{ opacity: 0, y: 16, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.28 }}
+          >
+            <p className="eyebrow">Guided Tour</p>
+            <h3>{activeOnboardingStep.title}</h3>
+            <p>{activeOnboardingStep.body}</p>
+            <div className="tour-progress" aria-hidden="true">
+              <span style={{ width: `${((onboardingStepIndex + 1) / onboardingTourSteps.length) * 100}%` }} />
+            </div>
+            <p className="small">
+              Step {onboardingStepIndex + 1} of {onboardingTourSteps.length}
+            </p>
+
+            <div className="tour-tip-mini">
+              <strong>Now useful:</strong>
+              <p>{contextualTips[0]}</p>
+            </div>
+
+            <div className="tour-actions">
+              <button onClick={() => moveOnboarding(-1)} disabled={onboardingStepIndex === 0}>
+                Back
+              </button>
+              {onboardingStepIndex < onboardingTourSteps.length - 1 ? (
+                <button onClick={() => moveOnboarding(1)}>Next</button>
+              ) : (
+                <button onClick={closeOnboarding}>Finish Tour</button>
+              )}
+              <button onClick={closeOnboarding}>Skip</button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   )
 }

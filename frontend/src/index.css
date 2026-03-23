@@ -1,5 +1,7 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
 :root {
-  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+  font-family: 'Outfit', 'Segoe UI', sans-serif;
   line-height: 1.4;
   font-weight: 400;
   color: #ecf2f8;
@@ -18,9 +20,10 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 20% 20%, rgba(26, 94, 154, 0.32), transparent 38%),
-    radial-gradient(circle at 88% 12%, rgba(41, 123, 159, 0.2), transparent 34%),
-    linear-gradient(140deg, #071017 5%, #081a2b 42%, #0d2137 100%);
+    radial-gradient(circle at 14% 18%, rgba(238, 153, 88, 0.26), transparent 34%),
+    radial-gradient(circle at 86% 10%, rgba(72, 183, 214, 0.22), transparent 31%),
+    radial-gradient(circle at 70% 80%, rgba(42, 107, 163, 0.16), transparent 33%),
+    linear-gradient(145deg, #090d18 2%, #0d1d2d 38%, #102436 66%, #0c1f2f 100%);
 }
 
 #root {
@@ -61,5 +64,6 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: 'Sora', 'Space Grotesk', sans-serif;
+  font-family: 'Outfit', sans-serif;
+  letter-spacing: -0.015em;
 }
