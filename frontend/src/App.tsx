@@ -22,6 +22,23 @@ type RunSummary = {
   codeHash: string
 }
 
+type VariableTransition = {
+  step: number
+  line: number
+  address: string
+  name: string
+  scope: string
+  from: string
+  to: string
+}
+
+type TraceMilestone = {
+  step: number
+  line: number
+  headline: string
+  detail: string
+}
+
 function hashCode(code: string): string {
   let hash = 0
   for (let index = 0; index < code.length; index += 1) {
@@ -99,6 +116,8 @@ function App() {
   const [runHistory, setRunHistory] = useState<RunSummary[]>([])
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const [heatmapEnabled, setHeatmapEnabled] = useState(true)
+  const [selectedVariableAddress, setSelectedVariableAddress] = useState('')
+  const [reportStatus, setReportStatus] = useState('')
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null)
   const decorationsRef = useRef<string[]>([])
@@ -266,6 +285,190 @@ function App() {
       .slice(0, 6)
   }, [trace])
 
+  const variableTimeline = useMemo(() => {
+    const catalog: { address: string; name: string; scope: string; label: string }[] = []
+    const transitions: VariableTransition[] = []
+
+    if (!trace || trace.snapshots.length === 0) {
+      return { catalog, transitions }
+    }
+
+    const latestSnapshot = trace.snapshots[trace.snapshots.length - 1]
+    latestSnapshot.stackMemory
+      .flatMap((frame) => frame.variables)
+      .forEach((variable) => {
+        catalog.push({
+          address: variable.address,
+          name: variable.name,
+          scope: variable.scope,
+          label: `${variable.scope}.${variable.name}`,
+        })
+      })
+
+    catalog.sort((a, b) => a.label.localeCompare(b.label))
+
+    for (let index = 1; index < trace.snapshots.length; index += 1) {
+      const current = trace.snapshots[index]
+      const prev = trace.snapshots[index - 1]
+      const prevValues = new Map<string, string>()
+
+      prev.stackMemory.forEach((frame) => {
+        frame.variables.forEach((variable) => {
+          prevValues.set(variable.address, variable.value)
+        })
+      })
+
+      current.stackMemory.forEach((frame) => {
+        frame.variables.forEach((variable) => {
+          const before = prevValues.get(variable.address)
+          if (before === undefined) {
+            transitions.push({
+              step: index,
+              line: current.line,
+              address: variable.address,
+              name: variable.name,
+              scope: variable.scope,
+              from: '(init)',
+              to: variable.value,
+            })
+            return
+          }
+
+          if (before !== variable.value) {
+            transitions.push({
+              step: index,
+              line: current.line,
+              address: variable.address,
+              name: variable.name,
+              scope: variable.scope,
+              from: before,
+              to: variable.value,
+            })
+          }
+        })
+      })
+    }
+
+    return { catalog, transitions }
+  }, [trace])
+
+  const selectedVariableTransitions = useMemo(() => {
+    if (!selectedVariableAddress) {
+      return [] as VariableTransition[]
+    }
+
+    return variableTimeline.transitions
+      .filter((entry) => entry.address === selectedVariableAddress)
+      .slice(-14)
+      .reverse()
+  }, [selectedVariableAddress, variableTimeline.transitions])
+
+  const executionHealth = useMemo(() => {
+    if (!trace || trace.snapshots.length === 0) {
+      return null
+    }
+
+    const stepCount = Math.max(trace.snapshots.length, 1)
+    const topHotLine = hottestLines[0]
+    const hotspotRatio = topHotLine ? topHotLine.count / stepCount : 0
+    const queuePeak = trace.snapshots.reduce((peak, snapshot) => {
+      const totalQueued =
+        snapshot.eventLoop.microtasks.length + snapshot.eventLoop.macrotasks.length + snapshot.eventLoop.webApis.length
+      return Math.max(peak, totalQueued)
+    }, 0)
+
+    const diagnosticsPenalty = trace.diagnostics.length * 12
+    const mutationPenalty = Math.min(24, Math.round((variableTimeline.transitions.length / stepCount) * 22))
+    const hotspotPenalty = Math.min(22, Math.round(hotspotRatio * 24))
+    const queuePenalty = Math.min(20, queuePeak * 3)
+    const score = Math.max(0, 100 - diagnosticsPenalty - mutationPenalty - hotspotPenalty - queuePenalty)
+
+    const risk = score >= 85 ? 'low' : score >= 65 ? 'moderate' : score >= 45 ? 'high' : 'critical'
+    return {
+      score,
+      risk,
+      queuePeak,
+      hotspotRatio,
+      topHotLine,
+    }
+  }, [hottestLines, trace, variableTimeline.transitions.length])
+
+  const anomalyInsights = useMemo(() => {
+    const insights: string[] = []
+    if (!trace || !executionHealth) {
+      return insights
+    }
+
+    if (trace.diagnostics.length > 0) {
+      insights.push(`${trace.diagnostics.length} parser/interpreter warning(s) were generated.`)
+    }
+
+    if (executionHealth.topHotLine && executionHealth.hotspotRatio >= 0.35) {
+      insights.push(
+        `Hotspot at line ${executionHealth.topHotLine.line} consumed ${(executionHealth.hotspotRatio * 100).toFixed(0)}% of sampled steps.`,
+      )
+    }
+
+    if (executionHealth.queuePeak >= 3) {
+      insights.push(`Event-loop pressure peaked at ${executionHealth.queuePeak} queued task(s).`)
+    }
+
+    if (variableTimeline.transitions.length > trace.snapshots.length * 0.8) {
+      insights.push('High mutation density detected; consider reducing shared mutable state.')
+    }
+
+    if (insights.length === 0) {
+      insights.push('No major anomalies detected in this trace run.')
+    }
+
+    return insights
+  }, [executionHealth, trace, variableTimeline.transitions.length])
+
+  const timelineMilestones = useMemo(() => {
+    if (!trace || trace.snapshots.length === 0) {
+      return [] as TraceMilestone[]
+    }
+
+    const mutationByStep = new Map<number, number>()
+    variableTimeline.transitions.forEach((entry) => {
+      mutationByStep.set(entry.step, (mutationByStep.get(entry.step) ?? 0) + 1)
+    })
+
+    const milestones: TraceMilestone[] = []
+    for (let index = 1; index < trace.snapshots.length; index += 1) {
+      const current = trace.snapshots[index]
+      const previous = trace.snapshots[index - 1]
+      const reasons: string[] = []
+
+      if (current.eventLoop.phase !== previous.eventLoop.phase) {
+        reasons.push(`phase changed to ${current.eventLoop.phase}`)
+      }
+
+      if (current.callStack.length !== previous.callStack.length) {
+        const movement = current.callStack.length > previous.callStack.length ? 'stack grew' : 'stack unwound'
+        reasons.push(`${movement} (${current.callStack.length} frame(s))`)
+      }
+
+      const mutationCount = mutationByStep.get(index) ?? 0
+      if (mutationCount > 0) {
+        reasons.push(`${mutationCount} variable mutation(s)`)
+      }
+
+      if (reasons.length === 0) {
+        continue
+      }
+
+      milestones.push({
+        step: index,
+        line: current.line,
+        headline: current.explanation,
+        detail: reasons.join(' • '),
+      })
+    }
+
+    return milestones.slice(0, 16)
+  }, [trace, variableTimeline.transitions])
+
   const traceSearchResults = useMemo(() => {
     const query = traceSearchQuery.trim().toLowerCase()
     if (!trace || !query) {
@@ -317,6 +520,19 @@ function App() {
       variableMutations: currentRunSummary.variableMutations - selectedRun.variableMutations,
     }
   }, [selectedRun, currentRunSummary])
+
+  useEffect(() => {
+    if (!trace || trace.snapshots.length === 0) {
+      setSelectedVariableAddress('')
+      return
+    }
+
+    if (selectedVariableAddress && variableTimeline.catalog.some((item) => item.address === selectedVariableAddress)) {
+      return
+    }
+
+    setSelectedVariableAddress(variableTimeline.catalog[0]?.address ?? '')
+  }, [selectedVariableAddress, trace, variableTimeline.catalog])
 
   const watchValues = useMemo(() => {
     const scope: Record<string, number> = {}
@@ -567,6 +783,30 @@ function App() {
 
   const removeWatchExpression = (target: string) => {
     setWatchExpressions((current) => current.filter((expression) => expression !== target))
+  }
+
+  const copyRunReport = async () => {
+    if (!currentRunSummary) {
+      return
+    }
+
+    const report = {
+      createdAt: new Date().toISOString(),
+      summary: currentRunSummary,
+      quality: executionHealth,
+      anomalies: anomalyInsights,
+      topHotLines: hottestLines,
+      topMutationKeys: mutationLeaderboard,
+      timelineMilestones,
+    }
+
+    if (!navigator.clipboard?.writeText) {
+      setReportStatus('Clipboard API is unavailable in this browser context.')
+      return
+    }
+
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2))
+    setReportStatus('Run report copied to clipboard.')
   }
 
   const renderVariables = (variables: RuntimeVariable[]) => {
@@ -883,6 +1123,11 @@ function App() {
                     </p>
                   </div>
                 )}
+
+                <button className="report-button" onClick={copyRunReport} disabled={!currentRunSummary}>
+                  Copy Current Run Report
+                </button>
+                {reportStatus && <p className="small">{reportStatus}</p>}
               </>
             )}
           </div>
@@ -958,6 +1203,49 @@ function App() {
                     </>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="viz-group">
+            <div className="row event-loop-title">
+              <h3>Deep Trace Insights</h3>
+              {executionHealth ? <span className={`risk-chip risk-${executionHealth.risk}`}>{executionHealth.risk}</span> : null}
+            </div>
+            {!executionHealth ? (
+              <p className="empty">Run code to compute risk scoring and anomaly diagnostics.</p>
+            ) : (
+              <>
+                <div className="health-strip">
+                  <div className="health-score" style={{ width: `${executionHealth.score}%` }} />
+                </div>
+                <p className="small">Execution quality score: {executionHealth.score}/100</p>
+                <div className="insight-list">
+                  {anomalyInsights.map((insight) => (
+                    <p key={insight}>{insight}</p>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="viz-group">
+            <h3>Execution Milestones</h3>
+            {!trace ? (
+              <p className="empty">Run code to generate milestone checkpoints.</p>
+            ) : timelineMilestones.length === 0 ? (
+              <p className="empty">No major transitions detected in this run.</p>
+            ) : (
+              <div className="milestone-list">
+                {timelineMilestones.map((milestone) => (
+                  <button key={`${milestone.step}-${milestone.line}`} onClick={() => setStepIndex(milestone.step)}>
+                    <span>
+                      Step {milestone.step + 1} • line {milestone.line}
+                    </span>
+                    <small>{milestone.headline}</small>
+                    <small className="muted">{milestone.detail}</small>
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -1075,6 +1363,48 @@ function App() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          <div className="viz-group">
+            <h3>Variable Timeline Explorer</h3>
+            {!trace ? (
+              <p className="empty">Run code to inspect variable change history over time.</p>
+            ) : variableTimeline.catalog.length === 0 ? (
+              <p className="empty">No tracked variables in this trace.</p>
+            ) : (
+              <>
+                <label>
+                  Variable
+                  <select
+                    value={selectedVariableAddress}
+                    onChange={(event) => setSelectedVariableAddress(event.target.value)}
+                  >
+                    {variableTimeline.catalog.map((item) => (
+                      <option key={item.address} value={item.address}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {selectedVariableTransitions.length === 0 ? (
+                  <p className="empty">This variable had no value transitions in the current run.</p>
+                ) : (
+                  <div className="timeline-table">
+                    {selectedVariableTransitions.map((entry) => (
+                      <button key={`${entry.step}-${entry.address}`} onClick={() => setStepIndex(entry.step)}>
+                        <span>
+                          Step {entry.step + 1} • line {entry.line}
+                        </span>
+                        <small>
+                          {entry.from} {'->'} {entry.to}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
 

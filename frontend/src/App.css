@@ -466,6 +466,20 @@
   font-size: 0.74rem;
 }
 
+.report-button {
+  margin-top: 0.62rem;
+  border: 1px solid rgba(121, 170, 209, 0.26);
+  background: linear-gradient(145deg, #1e5a87, #133f62);
+  color: #f1f9ff;
+  border-radius: 12px;
+  padding: 0.62rem 0.78rem;
+}
+
+.report-button:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
 .comparison-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -543,6 +557,64 @@
   font-size: 0.74rem;
 }
 
+.risk-chip {
+  border: 1px solid rgba(125, 180, 228, 0.32);
+  border-radius: 999px;
+  padding: 0.24rem 0.65rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.risk-low {
+  background: rgba(57, 164, 118, 0.24);
+  color: #8ff2c6;
+}
+
+.risk-moderate {
+  background: rgba(189, 145, 64, 0.24);
+  color: #f0d290;
+}
+
+.risk-high {
+  background: rgba(190, 112, 73, 0.24);
+  color: #ffb896;
+}
+
+.risk-critical {
+  background: rgba(174, 76, 76, 0.28);
+  color: #ffc0c0;
+}
+
+.health-strip {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(129, 176, 214, 0.28);
+  background: rgba(10, 30, 48, 0.76);
+  margin-bottom: 0.45rem;
+}
+
+.health-score {
+  height: 100%;
+  background: linear-gradient(90deg, #ff8b73, #f4cd6c 55%, #5fd6a4);
+}
+
+.insight-list {
+  display: grid;
+  gap: 0.36rem;
+}
+
+.insight-list p {
+  margin: 0;
+  border: 1px solid rgba(127, 176, 214, 0.2);
+  border-radius: 10px;
+  padding: 0.45rem 0.52rem;
+  background: rgba(8, 29, 46, 0.62);
+  font-size: 0.79rem;
+}
+
 .event-loop-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -581,6 +653,34 @@
   display: grid;
   gap: 0.45rem;
   margin-top: 0.45rem;
+}
+
+.milestone-list,
+.timeline-table {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.milestone-list button,
+.timeline-table button {
+  text-align: left;
+  border: 1px solid rgba(121, 170, 209, 0.2);
+  background: linear-gradient(145deg, rgba(15, 47, 71, 0.86), rgba(11, 29, 49, 0.78));
+  border-radius: 12px;
+  padding: 0.6rem;
+  color: #e5f4ff;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.milestone-list small,
+.timeline-table small {
+  color: #a4c4de;
+  font-size: 0.74rem;
+}
+
+.milestone-list .muted {
+  color: #85acc9;
 }
 
 .queue-item {
