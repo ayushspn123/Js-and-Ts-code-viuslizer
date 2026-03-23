@@ -278,6 +278,26 @@
   accent-color: #5ba7e5;
 }
 
+.checkbox-label {
+  display: flex !important;
+  align-items: center;
+  gap: 0.6rem;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: #d2e9ff !important;
+  font-size: 0.82rem !important;
+}
+
+.checkbox-label input {
+  accent-color: #68b2ec;
+}
+
+.shortcut-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #9ac2e4;
+}
+
 .explanation h3,
 .diagnostics h3,
 .viz-group h3 {
@@ -415,6 +435,52 @@
   gap: 0.45rem;
 }
 
+.trace-search-input {
+  width: 100%;
+  background: rgba(5, 24, 39, 0.88);
+  border: 1px solid rgba(130, 177, 211, 0.24);
+  color: #e6f4ff;
+  border-radius: 12px;
+  padding: 0.68rem 0.78rem;
+  margin-bottom: 0.55rem;
+}
+
+.trace-search-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.trace-search-list button {
+  text-align: left;
+  border: 1px solid rgba(121, 170, 209, 0.2);
+  background: linear-gradient(145deg, rgba(15, 47, 71, 0.86), rgba(11, 29, 49, 0.78));
+  border-radius: 12px;
+  padding: 0.62rem;
+  color: #e5f4ff;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.trace-search-list small {
+  color: #a4c4de;
+  font-size: 0.74rem;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.comparison-grid p {
+  margin: 0;
+  border: 1px solid rgba(132, 181, 219, 0.2);
+  border-radius: 10px;
+  padding: 0.46rem 0.52rem;
+  background: rgba(10, 35, 55, 0.65);
+}
+
 .watch-item {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -545,6 +611,52 @@
   font-size: 0.9rem;
 }
 
+.profiler-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.62rem;
+}
+
+.profiler-card {
+  border: 1px solid rgba(148, 194, 231, 0.14);
+  background: linear-gradient(145deg, rgba(9, 30, 48, 0.74), rgba(11, 25, 40, 0.56));
+  border-radius: 14px;
+  padding: 0.65rem;
+}
+
+.profiler-card h4 {
+  margin: 0 0 0.42rem;
+  font-size: 0.82rem;
+  color: #cce8ff;
+}
+
+.profiler-card p {
+  margin: 0.18rem 0;
+  font-size: 0.79rem;
+}
+
+.heat-line-1 {
+  background: rgba(87, 150, 217, 0.08);
+}
+
+.heat-line-2 {
+  background: rgba(88, 170, 230, 0.14);
+}
+
+.heat-line-3 {
+  background: rgba(90, 195, 255, 0.2);
+}
+
+.heat-gutter-1,
+.heat-gutter-2,
+.heat-gutter-3 {
+  border-left: 2px solid rgba(100, 175, 231, 0.45);
+}
+
+.heat-gutter-3 {
+  border-left-color: rgba(100, 212, 255, 0.9);
+}
+
 .console-output {
   display: grid;
   gap: 0.35rem;
@@ -599,7 +711,9 @@
 
   .runtime-stats,
   .insight-grid,
-  .event-loop-grid {
+  .event-loop-grid,
+  .profiler-grid,
+  .comparison-grid {
     grid-template-columns: 1fr;
   }
 

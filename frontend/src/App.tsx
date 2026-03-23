@@ -8,6 +8,82 @@ import { languagePresets } from './data/presets'
 import { generateExecutionTrace } from './engine/traceEngine'
 import type { ExecutionTrace, RuntimeVariable, SupportedLanguage } from './types'
 
+type RunSummary = {
+  id: number
+  timestamp: string
+  language: SupportedLanguage
+  steps: number
+  diagnostics: number
+  maxStackDepth: number
+  uniqueLines: number
+  variableMutations: number
+  microtasksScheduled: number
+  macrotasksScheduled: number
+  codeHash: string
+}
+
+function hashCode(code: string): string {
+  let hash = 0
+  for (let index = 0; index < code.length; index += 1) {
+    hash = (hash * 31 + code.charCodeAt(index)) | 0
+  }
+  return `${code.length}:${Math.abs(hash)}`
+}
+
+function buildRunSummary(trace: ExecutionTrace, code: string, language: SupportedLanguage): RunSummary {
+  let maxStackDepth = 0
+  const lines = new Set<number>()
+  let variableMutations = 0
+  let microtasksScheduled = 0
+  let macrotasksScheduled = 0
+
+  for (let index = 0; index < trace.snapshots.length; index += 1) {
+    const snapshot = trace.snapshots[index]
+    maxStackDepth = Math.max(maxStackDepth, snapshot.callStack.length)
+    if (snapshot.line > 0) {
+      lines.add(snapshot.line)
+    }
+
+    microtasksScheduled += snapshot.eventLoop.microtasks.length
+    macrotasksScheduled += snapshot.eventLoop.macrotasks.length
+
+    if (index === 0) {
+      continue
+    }
+
+    const prev = trace.snapshots[index - 1]
+    const prevMap = new Map<string, string>()
+    prev.stackMemory.forEach((frame) => {
+      frame.variables.forEach((variable) => {
+        prevMap.set(variable.address, variable.value)
+      })
+    })
+
+    snapshot.stackMemory.forEach((frame) => {
+      frame.variables.forEach((variable) => {
+        const before = prevMap.get(variable.address)
+        if (before !== undefined && before !== variable.value) {
+          variableMutations += 1
+        }
+      })
+    })
+  }
+
+  return {
+    id: Date.now(),
+    timestamp: new Date().toLocaleTimeString(),
+    language,
+    steps: trace.snapshots.length,
+    diagnostics: trace.diagnostics.length,
+    maxStackDepth,
+    uniqueLines: lines.size,
+    variableMutations,
+    microtasksScheduled,
+    macrotasksScheduled,
+    codeHash: hashCode(code),
+  }
+}
+
 function App() {
   const [language, setLanguage] = useState<SupportedLanguage>('javascript')
   const [code, setCode] = useState(languagePresets.javascript.code)
@@ -19,6 +95,10 @@ function App() {
   const [watchInput, setWatchInput] = useState('')
   const [watchExpressions, setWatchExpressions] = useState<string[]>(['score + 1'])
   const [selectedScope, setSelectedScope] = useState('all')
+  const [traceSearchQuery, setTraceSearchQuery] = useState('')
+  const [runHistory, setRunHistory] = useState<RunSummary[]>([])
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
+  const [heatmapEnabled, setHeatmapEnabled] = useState(true)
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null)
   const decorationsRef = useRef<string[]>([])
@@ -97,6 +177,147 @@ function App() {
     return changes
   }, [activeSnapshot, previousSnapshot])
 
+  const lineExecutionCounts = useMemo(() => {
+    const counts = new Map<number, number>()
+    if (!trace) {
+      return counts
+    }
+
+    trace.snapshots.forEach((snapshot) => {
+      if (snapshot.line > 0) {
+        counts.set(snapshot.line, (counts.get(snapshot.line) ?? 0) + 1)
+      }
+    })
+
+    return counts
+  }, [trace])
+
+  const hottestLines = useMemo(() => {
+    return [...lineExecutionCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([line, count]) => ({ line, count }))
+  }, [lineExecutionCounts])
+
+  const heatBuckets = useMemo(() => {
+    const mapped = new Map<number, 1 | 2 | 3>()
+    if (!trace || lineExecutionCounts.size === 0) {
+      return mapped
+    }
+
+    const max = Math.max(...lineExecutionCounts.values())
+    lineExecutionCounts.forEach((count, line) => {
+      const ratio = max === 0 ? 0 : count / max
+      const bucket: 1 | 2 | 3 = ratio >= 0.75 ? 3 : ratio >= 0.4 ? 2 : 1
+      mapped.set(line, bucket)
+    })
+    return mapped
+  }, [lineExecutionCounts, trace])
+
+  const functionActivity = useMemo(() => {
+    const activity = new Map<string, number>()
+    if (!trace) {
+      return [] as { name: string; hits: number }[]
+    }
+
+    trace.snapshots.forEach((snapshot) => {
+      snapshot.callStack.forEach((frame) => {
+        activity.set(frame.name, (activity.get(frame.name) ?? 0) + 1)
+      })
+    })
+
+    return [...activity.entries()]
+      .map(([name, hits]) => ({ name, hits }))
+      .sort((a, b) => b.hits - a.hits)
+      .slice(0, 6)
+  }, [trace])
+
+  const mutationLeaderboard = useMemo(() => {
+    if (!trace) {
+      return [] as { key: string; count: number }[]
+    }
+
+    const mutationMap = new Map<string, number>()
+    for (let index = 1; index < trace.snapshots.length; index += 1) {
+      const current = trace.snapshots[index]
+      const prev = trace.snapshots[index - 1]
+      const prevMap = new Map<string, string>()
+
+      prev.stackMemory.forEach((frame) => {
+        frame.variables.forEach((variable) => {
+          prevMap.set(variable.address, variable.value)
+        })
+      })
+
+      current.stackMemory.forEach((frame) => {
+        frame.variables.forEach((variable) => {
+          const before = prevMap.get(variable.address)
+          if (before !== undefined && before !== variable.value) {
+            const key = `${variable.scope}.${variable.name}`
+            mutationMap.set(key, (mutationMap.get(key) ?? 0) + 1)
+          }
+        })
+      })
+    }
+
+    return [...mutationMap.entries()]
+      .map(([key, count]) => ({ key, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6)
+  }, [trace])
+
+  const traceSearchResults = useMemo(() => {
+    const query = traceSearchQuery.trim().toLowerCase()
+    if (!trace || !query) {
+      return [] as { step: number; line: number; preview: string }[]
+    }
+
+    return trace.snapshots
+      .map((snapshot, index) => {
+        const logText = snapshot.eventLoop.logs.join(' ').toLowerCase()
+        const message = snapshot.explanation.toLowerCase()
+        const lineText = `line ${snapshot.line}`
+        const score = Number(message.includes(query)) + Number(logText.includes(query)) + Number(lineText.includes(query))
+        return {
+          step: index,
+          line: snapshot.line,
+          preview: snapshot.explanation,
+          score,
+        }
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map(({ step, line, preview }) => ({ step, line, preview }))
+  }, [trace, traceSearchQuery])
+
+  const currentRunSummary = useMemo(() => {
+    if (!trace) {
+      return null
+    }
+    return buildRunSummary(trace, code, language)
+  }, [trace, code, language])
+
+  const selectedRun = useMemo(() => {
+    if (selectedRunId === null) {
+      return null
+    }
+    return runHistory.find((run) => run.id === selectedRunId) ?? null
+  }, [runHistory, selectedRunId])
+
+  const comparisonDelta = useMemo(() => {
+    if (!selectedRun || !currentRunSummary) {
+      return null
+    }
+
+    return {
+      steps: currentRunSummary.steps - selectedRun.steps,
+      diagnostics: currentRunSummary.diagnostics - selectedRun.diagnostics,
+      maxStackDepth: currentRunSummary.maxStackDepth - selectedRun.maxStackDepth,
+      variableMutations: currentRunSummary.variableMutations - selectedRun.variableMutations,
+    }
+  }, [selectedRun, currentRunSummary])
+
   const watchValues = useMemo(() => {
     const scope: Record<string, number> = {}
     visibleVariables.forEach((variable) => {
@@ -155,6 +376,20 @@ function App() {
     return notes
   }, [activeSnapshot, variableChanges])
 
+  const jumpToNextBreakpoint = () => {
+    if (!trace || breakpointLines.length === 0) {
+      return
+    }
+
+    for (let index = stepIndex + 1; index < trace.snapshots.length; index += 1) {
+      const candidateLine = trace.snapshots[index].line
+      if (breakpointLines.includes(candidateLine)) {
+        setStepIndex(index)
+        return
+      }
+    }
+  }
+
   useEffect(() => {
     if (!isPlaying || !trace) {
       return
@@ -191,7 +426,19 @@ function App() {
       return
     }
 
+    const heatmapDecorations = heatmapEnabled
+      ? [...heatBuckets.entries()].map(([lineNumber, bucket]) => ({
+          range: new monacoRef.current!.Range(lineNumber, 1, lineNumber, 1),
+          options: {
+            isWholeLine: true,
+            className: `heat-line-${bucket}`,
+            linesDecorationsClassName: `heat-gutter-${bucket}`,
+          },
+        }))
+      : []
+
     const lineDecorations = [
+      ...heatmapDecorations,
       {
         range: new monacoRef.current.Range(line, 1, line, 1),
         options: {
@@ -213,13 +460,56 @@ function App() {
     decorationsRef.current = editorRef.current.deltaDecorations(decorationsRef.current, lineDecorations)
 
     editorRef.current.revealLineInCenter(line)
-  }, [activeSnapshot?.line, breakpointLines])
+  }, [activeSnapshot?.line, breakpointLines, heatBuckets, heatmapEnabled])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const isTypingElement =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.getAttribute('role') === 'textbox'
+      if (isTypingElement) {
+        return
+      }
+
+      if (event.code === 'Space' && trace) {
+        event.preventDefault()
+        setIsPlaying((value) => !value)
+        return
+      }
+
+      if (event.code === 'ArrowRight' && trace) {
+        event.preventDefault()
+        setStepIndex((current) => Math.min(current + 1, trace.snapshots.length - 1))
+        return
+      }
+
+      if (event.code === 'ArrowLeft' && trace) {
+        event.preventDefault()
+        setStepIndex((current) => Math.max(current - 1, 0))
+        return
+      }
+
+      if (event.key.toLowerCase() === 'b' && event.shiftKey) {
+        event.preventDefault()
+        jumpToNextBreakpoint()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [trace, jumpToNextBreakpoint])
 
   const runTrace = () => {
     const nextTrace = generateExecutionTrace(code, language)
+    const summary = buildRunSummary(nextTrace, code, language)
     setTrace(nextTrace)
     setStepIndex(0)
     setIsPlaying(false)
+    setRunHistory((current) => [summary, ...current].slice(0, 8))
+
+    if (selectedRunId === null) {
+      setSelectedRunId(summary.id)
+    }
 
     if (monacoRef.current && editorRef.current) {
       const markers = nextTrace.diagnostics.map((diagnostic) => ({
@@ -258,20 +548,6 @@ function App() {
   const resetExecution = () => {
     setStepIndex(0)
     setIsPlaying(false)
-  }
-
-  const jumpToNextBreakpoint = () => {
-    if (!trace || breakpointLines.length === 0) {
-      return
-    }
-
-    for (let index = stepIndex + 1; index < trace.snapshots.length; index += 1) {
-      const candidateLine = trace.snapshots[index].line
-      if (breakpointLines.includes(candidateLine)) {
-        setStepIndex(index)
-        return
-      }
-    }
   }
 
   const addWatchExpression = () => {
@@ -491,6 +767,15 @@ function App() {
                 placeholder="3, 7, 10"
               />
             </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={heatmapEnabled}
+                onChange={(event) => setHeatmapEnabled(event.target.checked)}
+              />
+              <span>Execution heatmap in editor</span>
+            </label>
+            <p className="shortcut-hint">Shortcuts: Space play/pause, Left/Right step, Shift+B next breakpoint.</p>
           </div>
           <div className="explanation">
             <h3>What is happening now?</h3>
@@ -511,7 +796,7 @@ function App() {
             ) : (
               variableChanges.slice(0, 6).map((change) => (
                 <p key={`${change.scope}-${change.name}-${change.to}`}>
-                  {change.scope}.{change.name}: {change.from} -> {change.to}
+                  {change.scope}.{change.name}: {change.from}{' -> '}{change.to}
                 </p>
               ))
             )}
@@ -524,6 +809,81 @@ function App() {
               trace.diagnostics.slice(0, 8).map((item) => (
                 <p key={`${item.line}-${item.message}`}>Line {item.line}: {item.message}</p>
               ))
+            )}
+          </div>
+
+          <div className="diagnostics">
+            <h3>Trace Query</h3>
+            <input
+              type="text"
+              value={traceSearchQuery}
+              onChange={(event) => setTraceSearchQuery(event.target.value)}
+              placeholder="Search explanation, logs, or line (e.g. line 12)"
+              className="trace-search-input"
+            />
+            {traceSearchQuery.trim() === '' ? (
+              <p className="empty">Type to search the timeline and jump to a matching step.</p>
+            ) : traceSearchResults.length === 0 ? (
+              <p className="empty">No matching step found for this query.</p>
+            ) : (
+              <div className="trace-search-list">
+                {traceSearchResults.map((result) => (
+                  <button key={`${result.step}-${result.line}`} onClick={() => setStepIndex(result.step)}>
+                    <span>
+                      Step {result.step + 1} • line {result.line}
+                    </span>
+                    <small>{result.preview}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="diagnostics">
+            <h3>Run Lab</h3>
+            {runHistory.length === 0 ? (
+              <p className="empty">Run a trace to build comparison history.</p>
+            ) : (
+              <>
+                <label>
+                  Compare Against
+                  <select
+                    value={selectedRunId ?? ''}
+                    onChange={(event) => setSelectedRunId(event.target.value ? Number(event.target.value) : null)}
+                  >
+                    <option value="">None</option>
+                    {runHistory.map((run) => (
+                      <option key={run.id} value={run.id}>
+                        {run.timestamp} • {run.language.toUpperCase()} • {run.steps} steps
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {comparisonDelta && (
+                  <div className="comparison-grid">
+                    <p>Steps delta: {comparisonDelta.steps >= 0 ? `+${comparisonDelta.steps}` : comparisonDelta.steps}</p>
+                    <p>
+                      Diagnostics delta:{' '}
+                      {comparisonDelta.diagnostics >= 0
+                        ? `+${comparisonDelta.diagnostics}`
+                        : comparisonDelta.diagnostics}
+                    </p>
+                    <p>
+                      Stack depth delta:{' '}
+                      {comparisonDelta.maxStackDepth >= 0
+                        ? `+${comparisonDelta.maxStackDepth}`
+                        : comparisonDelta.maxStackDepth}
+                    </p>
+                    <p>
+                      Mutation delta:{' '}
+                      {comparisonDelta.variableMutations >= 0
+                        ? `+${comparisonDelta.variableMutations}`
+                        : comparisonDelta.variableMutations}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </section>
@@ -541,6 +901,65 @@ function App() {
                 <strong>{insight.value}</strong>
               </div>
             ))}
+          </div>
+
+          <div className="viz-group">
+            <h3>Execution Profiler</h3>
+            {!trace ? (
+              <p className="empty">Run code to generate profiler analytics.</p>
+            ) : (
+              <div className="profiler-grid">
+                <div className="profiler-card">
+                  <h4>Hot Lines</h4>
+                  {hottestLines.length === 0 ? (
+                    <p className="empty">No line samples yet.</p>
+                  ) : (
+                    hottestLines.map((entry) => (
+                      <p key={`hot-${entry.line}`}>
+                        line {entry.line}: {entry.count} hit(s)
+                      </p>
+                    ))
+                  )}
+                </div>
+                <div className="profiler-card">
+                  <h4>Function Activity</h4>
+                  {functionActivity.length === 0 ? (
+                    <p className="empty">No frame activity yet.</p>
+                  ) : (
+                    functionActivity.map((entry) => (
+                      <p key={`fn-${entry.name}`}>
+                        {entry.name}: {entry.hits} frame snapshot(s)
+                      </p>
+                    ))
+                  )}
+                </div>
+                <div className="profiler-card">
+                  <h4>Mutation Leaderboard</h4>
+                  {mutationLeaderboard.length === 0 ? (
+                    <p className="empty">No mutable state changes yet.</p>
+                  ) : (
+                    mutationLeaderboard.map((entry) => (
+                      <p key={`mutation-${entry.key}`}>
+                        {entry.key}: {entry.count} change(s)
+                      </p>
+                    ))
+                  )}
+                </div>
+                <div className="profiler-card">
+                  <h4>Current Run Snapshot</h4>
+                  {!currentRunSummary ? (
+                    <p className="empty">No run summary.</p>
+                  ) : (
+                    <>
+                      <p>Code fingerprint: {currentRunSummary.codeHash}</p>
+                      <p>Unique lines touched: {currentRunSummary.uniqueLines}</p>
+                      <p>Max stack depth: {currentRunSummary.maxStackDepth}</p>
+                      <p>Total mutations: {currentRunSummary.variableMutations}</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {activeSnapshot?.eventLoop.enabled ? (
