@@ -1737,3 +1737,99 @@
     transition: none !important;
   }
 }
+
+.node-file-create {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.node-file-create input {
+  border-radius: 10px;
+  border: 1px solid rgba(133, 186, 222, 0.24);
+  background: rgba(7, 24, 39, 0.88);
+  color: #dff2ff;
+  padding: 0.56rem 0.62rem;
+}
+
+.node-file-create button {
+  border: 1px solid rgba(133, 186, 222, 0.24);
+  background: linear-gradient(145deg, #1b4f77, #123653);
+  color: #ebf8ff;
+}
+
+.node-file-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 0.55rem;
+}
+
+.node-file-list button {
+  border: 1px solid rgba(128, 179, 215, 0.2);
+  border-radius: 10px;
+  background: rgba(9, 31, 48, 0.72);
+  color: #d4ebff;
+  text-align: left;
+  padding: 0.45rem 0.52rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.74rem;
+}
+
+.node-file-list button.active {
+  border-color: rgba(245, 193, 119, 0.52);
+  background: linear-gradient(130deg, rgba(237, 157, 96, 0.2), rgba(115, 203, 237, 0.18));
+  color: #fff7ea;
+}
+
+.node-file-heading {
+  margin-bottom: 0.35rem;
+}
+
+.node-file-heading h4 {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #cfe8ff;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.node-route-catalog {
+  border: 1px solid rgba(131, 186, 216, 0.2);
+  border-radius: 12px;
+  padding: 0.55rem;
+  background: rgba(7, 26, 42, 0.58);
+  display: grid;
+  gap: 0.42rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.node-route-catalog h4 {
+  margin: 0;
+}
+
+.node-route-catalog button {
+  border: 1px solid rgba(121, 170, 209, 0.2);
+  border-radius: 10px;
+  background: rgba(9, 31, 48, 0.72);
+  color: #d4edff;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+}
+
+.status-pill.status-error {
+  background: rgba(214, 92, 79, 0.28);
+  border-color: rgba(242, 143, 123, 0.38);
+  color: #ffd2c7;
+}
+
+@media (max-width: 720px) {
+  .node-file-create {
+    grid-template-columns: 1fr;
+  }
+}
