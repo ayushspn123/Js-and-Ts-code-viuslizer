@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import Editor from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { Parser } from 'expr-eval'
+import { ModuleKind, ScriptTarget, transpileModule } from 'typescript'
 import './App.css'
 import { languagePresets } from './data/presets'
 import { generateExecutionTrace } from './engine/traceEngine'
@@ -37,6 +38,177 @@ type TraceMilestone = {
   line: number
   headline: string
   detail: string
+}
+
+type TraceRun = {
+  id: number
+  summary: RunSummary
+  trace: ExecutionTrace
+}
+
+type OnboardingTourStep = {
+  title: string
+  body: string
+  target: 'editor' | 'controls' | 'visual' | 'compare' | 'lanes'
+}
+
+const onboardingTourSteps: OnboardingTourStep[] = [
+  {
+    title: 'Welcome to Cinematic Mode',
+    body: 'This workspace turns code execution into a guided story. Start with Run, then move through the timeline and watch memory evolve.',
+    target: 'controls',
+  },
+  {
+    title: 'Editor Heat + Runtime Focus',
+    body: 'The editor highlights active execution and hot paths. Keep heatmap enabled when hunting loops and hotspots.',
+    target: 'editor',
+  },
+  {
+    title: 'Split Trace Comparison',
+    body: 'Enable compare mode to inspect two runs side-by-side. One scrubber drives both timelines so differences appear immediately.',
+    target: 'compare',
+  },
+  {
+    title: 'Performance Lanes',
+    body: 'Lane sparklines expose frame pressure per function over time. Badges call out recursion, burstiness, and high occupancy.',
+    target: 'lanes',
+  },
+  {
+    title: 'Contextual Tips',
+    body: 'Tips update based on your current state and anomalies so you always know the next useful debugging action.',
+    target: 'visual',
+  },
+]
+
+function buildSparklinePoints(samples: number[], width = 160, height = 34): string {
+  if (samples.length === 0) {
+    return ''
+  }
+
+  const max = Math.max(...samples, 1)
+  const stepX = samples.length > 1 ? width / (samples.length - 1) : width
+  return samples
+    .map((value, index) => {
+      const x = index * stepX
+      const y = height - (value / max) * height
+      return `${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+}
+
+type ExecutionMode = 'trace' | 'instant'
+
+type InstantRunState = {
+  status: 'idle' | 'running' | 'success' | 'error' | 'timeout'
+  output: string[]
+  durationMs: number | null
+  error: string | null
+}
+
+const INSTANT_RUN_TIMEOUT_MS = 3500
+
+function compileForInstantRun(code: string, language: SupportedLanguage): string | null {
+  if (language === 'javascript') {
+    return code
+  }
+
+  if (language === 'typescript') {
+    return transpileModule(code, {
+      compilerOptions: {
+        target: ScriptTarget.ES2021,
+        module: ModuleKind.ESNext,
+      },
+      reportDiagnostics: false,
+    }).outputText
+  }
+
+  return null
+}
+
+async function runInstantInWorker(code: string, timeoutMs: number): Promise<{
+  timedOut: boolean
+  output: string[]
+  durationMs: number
+  error: string | null
+}> {
+  const workerSource = `
+    self.onmessage = async (event) => {
+      const code = event.data?.code ?? '';
+      const startedAt = Date.now();
+      const logs = [];
+
+      const serialize = (value) => {
+        if (typeof value === 'string') {
+          return value;
+        }
+
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      };
+
+      const emit = (...args) => {
+        logs.push(args.map(serialize).join(' '));
+      };
+
+      const consoleProxy = {
+        log: (...args) => emit(...args),
+        info: (...args) => emit(...args),
+        warn: (...args) => emit(...args),
+        error: (...args) => emit(...args),
+      };
+
+      try {
+        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+        const run = new AsyncFunction('console', code);
+        await run(consoleProxy);
+        self.postMessage({ type: 'done', logs, durationMs: Date.now() - startedAt });
+      } catch (error) {
+        self.postMessage({
+          type: 'error',
+          logs,
+          durationMs: Date.now() - startedAt,
+          error: error && error.message ? error.message : String(error),
+        });
+      }
+    };
+  `
+
+  const blob = new Blob([workerSource], { type: 'application/javascript' })
+  const workerUrl = URL.createObjectURL(blob)
+
+  return new Promise((resolve) => {
+    const worker = new Worker(workerUrl)
+
+    const timeout = window.setTimeout(() => {
+      worker.terminate()
+      URL.revokeObjectURL(workerUrl)
+      resolve({
+        timedOut: true,
+        output: ['Execution timed out. Check for infinite loops or very heavy work.'],
+        durationMs: timeoutMs,
+        error: 'Timed out',
+      })
+    }, timeoutMs)
+
+    worker.onmessage = (event: MessageEvent) => {
+      window.clearTimeout(timeout)
+      worker.terminate()
+      URL.revokeObjectURL(workerUrl)
+
+      const payload = event.data ?? {}
+      resolve({
+        timedOut: false,
+        output: Array.isArray(payload.logs) ? payload.logs : [],
+        durationMs: Number(payload.durationMs ?? 0),
+        error: typeof payload.error === 'string' ? payload.error : null,
+      })
+    }
+
+    worker.postMessage({ code })
+  })
 }
 
 function hashCode(code: string): string {
@@ -104,6 +276,7 @@ function buildRunSummary(trace: ExecutionTrace, code: string, language: Supporte
 function App() {
   const [language, setLanguage] = useState<SupportedLanguage>('javascript')
   const [code, setCode] = useState(languagePresets.javascript.code)
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('instant')
   const [trace, setTrace] = useState<ExecutionTrace | null>(null)
   const [stepIndex, setStepIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -114,10 +287,25 @@ function App() {
   const [selectedScope, setSelectedScope] = useState('all')
   const [traceSearchQuery, setTraceSearchQuery] = useState('')
   const [runHistory, setRunHistory] = useState<RunSummary[]>([])
+  const [traceRuns, setTraceRuns] = useState<TraceRun[]>([])
+  const [activeRunId, setActiveRunId] = useState<number | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
+  const [compareMode, setCompareMode] = useState(false)
+  const [compareLeftRunId, setCompareLeftRunId] = useState<number | null>(null)
+  const [compareRightRunId, setCompareRightRunId] = useState<number | null>(null)
+  const [compareScrubPercent, setCompareScrubPercent] = useState(0)
   const [heatmapEnabled, setHeatmapEnabled] = useState(true)
   const [selectedVariableAddress, setSelectedVariableAddress] = useState('')
   const [reportStatus, setReportStatus] = useState('')
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
+  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0)
+  const [instantRun, setInstantRun] = useState<InstantRunState>({
+    status: 'idle',
+    output: [],
+    durationMs: null,
+    error: null,
+  })
+  const [isFormatting, setIsFormatting] = useState(false)
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null)
   const decorationsRef = useRef<string[]>([])
@@ -129,6 +317,29 @@ function App() {
     }
     return trace.snapshots[Math.min(stepIndex, trace.snapshots.length - 1)]
   }, [stepIndex, trace])
+
+  const playbackProgress = useMemo(() => {
+    if (!trace || trace.snapshots.length <= 1) {
+      return 0
+    }
+    return Math.round((Math.min(stepIndex, trace.snapshots.length - 1) / (trace.snapshots.length - 1)) * 100)
+  }, [stepIndex, trace])
+
+  const runStateLabel = useMemo(() => {
+    if (!trace) {
+      return 'Idle'
+    }
+
+    if (isPlaying) {
+      return 'Running'
+    }
+
+    if (stepIndex >= trace.snapshots.length - 1) {
+      return 'Completed'
+    }
+
+    return 'Paused'
+  }, [isPlaying, stepIndex, trace])
 
   const languageForMonaco = useMemo(() => {
     if (language === 'typescript') {
@@ -469,6 +680,159 @@ function App() {
     return milestones.slice(0, 16)
   }, [trace, variableTimeline.transitions])
 
+  const heroMetrics = useMemo(() => {
+    return [
+      {
+        label: 'Run State',
+        value: runStateLabel,
+      },
+      {
+        label: 'Progress',
+        value: `${playbackProgress}%`,
+      },
+      {
+        label: 'Diagnostics',
+        value: String(trace?.diagnostics.length ?? 0),
+      },
+      {
+        label: 'Quality',
+        value: executionHealth ? `${executionHealth.score}/100` : '--',
+      },
+    ]
+  }, [executionHealth, playbackProgress, runStateLabel, trace?.diagnostics.length])
+
+  const contextualTips = useMemo(() => {
+    const tips: string[] = []
+
+    if (!trace) {
+      tips.push('Run the preset once to unlock milestone, anomaly, and lane analysis.')
+    } else {
+      if ((trace.diagnostics.length ?? 0) > 0) {
+        tips.push('Open Interpreter Notes first; unresolved diagnostics can skew downstream analytics.')
+      }
+
+      if ((activeSnapshot?.eventLoop.microtasks.length ?? 0) > 0 && (activeSnapshot?.eventLoop.macrotasks.length ?? 0) > 0) {
+        tips.push('Both microtasks and macrotasks are queued: step to the next milestone to inspect task ordering.')
+      }
+
+      if (variableChanges.length > 2) {
+        tips.push('High mutation step detected: use Variable Timeline Explorer to isolate which writes were causal.')
+      }
+
+      if (executionHealth && executionHealth.score < 65) {
+        tips.push('Execution score is low. Check hot lines and function lanes for concentrated frame pressure.')
+      }
+    }
+
+    if (tips.length === 0) {
+      tips.push('Trace is stable. Use compare mode to validate behavior changes between runs.')
+    }
+
+    return tips.slice(0, 4)
+  }, [activeSnapshot?.eventLoop.macrotasks.length, activeSnapshot?.eventLoop.microtasks.length, executionHealth, trace, variableChanges.length])
+
+  const compareLeftRun = useMemo(() => {
+    if (compareLeftRunId === null) {
+      return null
+    }
+    return traceRuns.find((run) => run.id === compareLeftRunId) ?? null
+  }, [compareLeftRunId, traceRuns])
+
+  const compareRightRun = useMemo(() => {
+    if (compareRightRunId === null) {
+      return null
+    }
+    return traceRuns.find((run) => run.id === compareRightRunId) ?? null
+  }, [compareRightRunId, traceRuns])
+
+  const compareLeftIndex = useMemo(() => {
+    if (!compareLeftRun || compareLeftRun.trace.snapshots.length <= 1) {
+      return 0
+    }
+    return Math.round((compareScrubPercent / 100) * (compareLeftRun.trace.snapshots.length - 1))
+  }, [compareLeftRun, compareScrubPercent])
+
+  const compareRightIndex = useMemo(() => {
+    if (!compareRightRun || compareRightRun.trace.snapshots.length <= 1) {
+      return 0
+    }
+    return Math.round((compareScrubPercent / 100) * (compareRightRun.trace.snapshots.length - 1))
+  }, [compareRightRun, compareScrubPercent])
+
+  const compareLeftSnapshot = useMemo(() => {
+    if (!compareLeftRun) {
+      return null
+    }
+    return compareLeftRun.trace.snapshots[Math.min(compareLeftIndex, compareLeftRun.trace.snapshots.length - 1)] ?? null
+  }, [compareLeftIndex, compareLeftRun])
+
+  const compareRightSnapshot = useMemo(() => {
+    if (!compareRightRun) {
+      return null
+    }
+    return compareRightRun.trace.snapshots[Math.min(compareRightIndex, compareRightRun.trace.snapshots.length - 1)] ?? null
+  }, [compareRightIndex, compareRightRun])
+
+  const functionLanes = useMemo(() => {
+    if (!trace || trace.snapshots.length === 0) {
+      return [] as { name: string; totalHits: number; sparkline: string; badges: string[] }[]
+    }
+
+    const frameNames = new Set<string>()
+    trace.snapshots.forEach((snapshot) => {
+      snapshot.callStack.forEach((frame) => {
+        frameNames.add(frame.name)
+      })
+    })
+
+    const lanes = [...frameNames]
+      .map((name) => {
+        const samples = trace.snapshots.map(
+          (snapshot) => snapshot.callStack.filter((frame) => frame.name === name).length,
+        )
+        const totalHits = samples.reduce((sum, value) => sum + value, 0)
+        const peak = Math.max(...samples, 0)
+        let burst = 0
+        let current = 0
+
+        samples.forEach((value) => {
+          if (value > 0) {
+            current += 1
+            burst = Math.max(burst, current)
+            return
+          }
+          current = 0
+        })
+
+        const activeRatio = samples.length === 0 ? 0 : totalHits / samples.length
+        const badges: string[] = []
+        if (peak > 2) {
+          badges.push('recursion')
+        }
+        if (burst >= 4) {
+          badges.push('burst')
+        }
+        if (activeRatio > 0.8) {
+          badges.push('hot')
+        }
+
+        if (badges.length === 0) {
+          badges.push('stable')
+        }
+
+        return {
+          name,
+          totalHits,
+          sparkline: buildSparklinePoints(samples),
+          badges,
+        }
+      })
+      .sort((a, b) => b.totalHits - a.totalHits)
+      .slice(0, 8)
+
+    return lanes
+  }, [trace])
+
   const traceSearchResults = useMemo(() => {
     const query = traceSearchQuery.trim().toLowerCase()
     if (!trace || !query) {
@@ -533,6 +897,27 @@ function App() {
 
     setSelectedVariableAddress(variableTimeline.catalog[0]?.address ?? '')
   }, [selectedVariableAddress, trace, variableTimeline.catalog])
+
+  useEffect(() => {
+    const seen = localStorage.getItem('trace-visualizer-onboarded')
+    if (!seen) {
+      setOnboardingOpen(true)
+      setOnboardingStepIndex(0)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!trace || trace.snapshots.length <= 1 || activeRunId === null) {
+      return
+    }
+
+    if (compareRightRunId !== activeRunId) {
+      return
+    }
+
+    const nextPercent = Math.round((stepIndex / (trace.snapshots.length - 1)) * 100)
+    setCompareScrubPercent(nextPercent)
+  }, [activeRunId, compareRightRunId, stepIndex, trace])
 
   const watchValues = useMemo(() => {
     const scope: Record<string, number> = {}
@@ -680,6 +1065,12 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && onboardingOpen) {
+        setOnboardingOpen(false)
+        localStorage.setItem('trace-visualizer-onboarded', 'true')
+        return
+      }
+
       const target = event.target as HTMLElement | null
       const isTypingElement =
         target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.getAttribute('role') === 'textbox'
@@ -708,20 +1099,41 @@ function App() {
       if (event.key.toLowerCase() === 'b' && event.shiftKey) {
         event.preventDefault()
         jumpToNextBreakpoint()
+        return
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault()
+        if (executionMode === 'instant') {
+          void runInstantExecution()
+          return
+        }
+
+        runTrace()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [trace, jumpToNextBreakpoint])
+  }, [onboardingOpen, trace, jumpToNextBreakpoint, executionMode, code, language])
 
   const runTrace = () => {
     const nextTrace = generateExecutionTrace(code, language)
     const summary = buildRunSummary(nextTrace, code, language)
     setTrace(nextTrace)
+    setActiveRunId(summary.id)
     setStepIndex(0)
     setIsPlaying(false)
     setRunHistory((current) => [summary, ...current].slice(0, 8))
+    setTraceRuns((current) => {
+      const nextRuns = [{ id: summary.id, summary, trace: nextTrace }, ...current].slice(0, 8)
+      if (nextRuns.length >= 2) {
+        setCompareLeftRunId(nextRuns[1].id)
+      }
+      setCompareRightRunId(summary.id)
+      return nextRuns
+    })
+    setCompareScrubPercent(0)
 
     if (selectedRunId === null) {
       setSelectedRunId(summary.id)
@@ -741,13 +1153,85 @@ function App() {
     }
   }
 
+  const runInstantExecution = async () => {
+    const compiled = compileForInstantRun(code, language)
+    if (!compiled) {
+      setInstantRun({
+        status: 'error',
+        output: [],
+        durationMs: null,
+        error: 'Normal run mode currently supports JavaScript and TypeScript.',
+      })
+      return
+    }
+
+    setInstantRun({
+      status: 'running',
+      output: ['Running in isolated worker...'],
+      durationMs: null,
+      error: null,
+    })
+
+    const result = await runInstantInWorker(compiled, INSTANT_RUN_TIMEOUT_MS)
+    if (result.timedOut) {
+      setInstantRun({
+        status: 'timeout',
+        output: result.output,
+        durationMs: result.durationMs,
+        error: result.error,
+      })
+      return
+    }
+
+    if (result.error) {
+      setInstantRun({
+        status: 'error',
+        output: result.output,
+        durationMs: result.durationMs,
+        error: result.error,
+      })
+      return
+    }
+
+    setInstantRun({
+      status: 'success',
+      output: result.output,
+      durationMs: result.durationMs,
+      error: null,
+    })
+  }
+
   const switchLanguage = (nextLanguage: SupportedLanguage) => {
     setLanguage(nextLanguage)
     setCode(languagePresets[nextLanguage].code)
     setTrace(null)
+    setInstantRun({ status: 'idle', output: [], durationMs: null, error: null })
     setStepIndex(0)
     setIsPlaying(false)
     setSelectedScope('all')
+  }
+
+  const resetToPreset = () => {
+    setCode(languagePresets[language].code)
+    setTrace(null)
+    setInstantRun({ status: 'idle', output: [], durationMs: null, error: null })
+    setStepIndex(0)
+    setIsPlaying(false)
+  }
+
+  const formatDocument = async () => {
+    if (!editorRef.current) {
+      return
+    }
+
+    const action = editorRef.current.getAction('editor.action.formatDocument')
+    if (!action) {
+      return
+    }
+
+    setIsFormatting(true)
+    await action.run()
+    setIsFormatting(false)
   }
 
   const stepForward = () => {
@@ -807,6 +1291,28 @@ function App() {
 
     await navigator.clipboard.writeText(JSON.stringify(report, null, 2))
     setReportStatus('Run report copied to clipboard.')
+  }
+
+  const closeOnboarding = () => {
+    setOnboardingOpen(false)
+    localStorage.setItem('trace-visualizer-onboarded', 'true')
+  }
+
+  const moveOnboarding = (direction: -1 | 1) => {
+    setOnboardingStepIndex((current) => {
+      const next = Math.min(Math.max(current + direction, 0), onboardingTourSteps.length - 1)
+      return next
+    })
+  }
+
+  const setCompareScrub = (percent: number) => {
+    const next = Math.min(100, Math.max(0, percent))
+    setCompareScrubPercent(next)
+
+    if (trace && trace.snapshots.length > 1) {
+      const nextStep = Math.round((next / 100) * (trace.snapshots.length - 1))
+      setStepIndex(nextStep)
+    }
   }
 
   const renderVariables = (variables: RuntimeVariable[]) => {
@@ -874,15 +1380,28 @@ function App() {
     )
   }
 
+  const activeOnboardingStep = onboardingTourSteps[Math.min(onboardingStepIndex, onboardingTourSteps.length - 1)]
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${onboardingOpen ? `tour-target-${activeOnboardingStep.target}` : ''}`}>
       <header className="app-header">
         <div>
           <p className="eyebrow">Code Execution Visualizer</p>
-          <h1>Trace JavaScript, TypeScript, C, and C++ step-by-step</h1>
+          <h1>Build, run, and deep-debug code with a god-level runtime lab</h1>
           <p className="hero-copy">
-            Follow the call stack, memory, event loop queues, console output, and variable changes as each step executes.
+            Write code directly in the editor and switch between instant run mode and full trace debugging mode with memory + event-loop intelligence.
           </p>
+          <div className="hero-metrics">
+            {heroMetrics.map((metric) => (
+              <article key={metric.label}>
+                <p>{metric.label}</p>
+                <strong>{metric.value}</strong>
+              </article>
+            ))}
+          </div>
+          <div className="hero-progress" aria-hidden="true">
+            <span style={{ width: `${playbackProgress}%` }} />
+          </div>
         </div>
         <div className="language-switcher">
           {(['javascript', 'typescript', 'c', 'cpp'] as SupportedLanguage[]).map((item) => (
@@ -894,6 +1413,15 @@ function App() {
               {item.toUpperCase()}
             </button>
           ))}
+          <button
+            className="tour-launch"
+            onClick={() => {
+              setOnboardingStepIndex(0)
+              setOnboardingOpen(true)
+            }}
+          >
+            Tour
+          </button>
         </div>
       </header>
 
@@ -902,6 +1430,36 @@ function App() {
           <div className="panel-title">
             <h2>Editor</h2>
             <span>{languagePresets[language].title}</span>
+          </div>
+          <div className="mode-switch">
+            <button
+              className={executionMode === 'instant' ? 'active' : ''}
+              onClick={() => setExecutionMode('instant')}
+            >
+              Instant Run
+            </button>
+            <button className={executionMode === 'trace' ? 'active' : ''} onClick={() => setExecutionMode('trace')}>
+              Trace Debug
+            </button>
+          </div>
+          <div className="editor-toolbar">
+            <button onClick={() => void formatDocument()} disabled={isFormatting}>
+              {isFormatting ? 'Formatting...' : 'Format Code'}
+            </button>
+            <button onClick={resetToPreset}>Reset Preset</button>
+            <button
+              className="primary-cta"
+              onClick={() => {
+                if (executionMode === 'instant') {
+                  void runInstantExecution()
+                  return
+                }
+
+                runTrace()
+              }}
+            >
+              {executionMode === 'instant' ? 'Run Normally' : 'Run Trace'}
+            </button>
           </div>
           <Editor
             height="70vh"
@@ -921,6 +1479,39 @@ function App() {
             }}
             theme="vs-dark"
           />
+          <div className="instant-runner">
+            <div className="row">
+              <h3>Normal Run Console</h3>
+              <span className={`status-pill status-${instantRun.status}`}>{instantRun.status.toUpperCase()}</span>
+            </div>
+            <p className="small">Shortcut: Ctrl/Cmd+Enter. Instant mode runs without step-by-step debugging.</p>
+            {language === 'c' || language === 'cpp' ? (
+              <p className="empty">Normal run currently supports JavaScript and TypeScript. Use trace mode for C/C++.</p>
+            ) : (
+              <>
+                <div className="instant-actions">
+                  <button onClick={() => void runInstantExecution()} disabled={instantRun.status === 'running'}>
+                    {instantRun.status === 'running' ? 'Running...' : 'Run Now'}
+                  </button>
+                  <button
+                    onClick={() => setInstantRun({ status: 'idle', output: [], durationMs: null, error: null })}
+                    disabled={instantRun.status === 'running'}
+                  >
+                    Clear Output
+                  </button>
+                </div>
+                <div className="console-output instant-output">
+                  {instantRun.output.length === 0 ? (
+                    <p>No output yet.</p>
+                  ) : (
+                    instantRun.output.map((entry, index) => <p key={`${entry}-${index}`}>{entry}</p>)
+                  )}
+                  {instantRun.error ? <p>Error: {instantRun.error}</p> : null}
+                </div>
+                <p className="small">Duration: {instantRun.durationMs === null ? '-' : `${instantRun.durationMs}ms`}</p>
+              </>
+            )}
+          </div>
         </section>
 
         <section className="panel controls-panel">
@@ -930,6 +1521,10 @@ function App() {
               Step {trace ? Math.min(stepIndex + 1, trace.snapshots.length) : 0}/
               {trace?.snapshots.length ?? 0}
             </span>
+          </div>
+          <div className="state-chip-row">
+            <span className={`state-chip state-${runStateLabel.toLowerCase()}`}>{runStateLabel}</span>
+            <span className="state-chip secondary">Playback {playbackProgress}%</span>
           </div>
           <div className="runtime-stats">
             <article>
@@ -958,7 +1553,7 @@ function App() {
             </article>
           </div>
           <div className="controls-grid">
-            <button onClick={runTrace}>Run</button>
+            <button onClick={runTrace}>Run Trace</button>
             <button onClick={() => setIsPlaying((value) => !value)} disabled={!trace}>
               {isPlaying ? 'Pause' : 'Play'}
             </button>
@@ -973,6 +1568,32 @@ function App() {
             </button>
             <button onClick={jumpToNextBreakpoint} disabled={!trace || breakpointLines.length === 0}>
               Next Breakpoint
+            </button>
+          </div>
+          <div className="jump-grid">
+            <button onClick={() => setStepIndex(0)} disabled={!trace}>
+              Start
+            </button>
+            <button
+              onClick={() => setStepIndex(Math.floor((trace?.snapshots.length ?? 1) * 0.25))}
+              disabled={!trace}
+            >
+              25%
+            </button>
+            <button
+              onClick={() => setStepIndex(Math.floor((trace?.snapshots.length ?? 1) * 0.5))}
+              disabled={!trace}
+            >
+              50%
+            </button>
+            <button
+              onClick={() => setStepIndex(Math.floor((trace?.snapshots.length ?? 1) * 0.75))}
+              disabled={!trace}
+            >
+              75%
+            </button>
+            <button onClick={() => setStepIndex(Math.max((trace?.snapshots.length ?? 1) - 1, 0))} disabled={!trace}>
+              End
             </button>
           </div>
           <div className="advanced-bar">
@@ -1020,6 +1641,14 @@ function App() {
           <div className="explanation">
             <h3>What is happening now?</h3>
             <p>{activeSnapshot?.explanation ?? 'Press Run to generate a complete trace and memory timeline.'}</p>
+          </div>
+          <div className="diagnostics">
+            <h3>Contextual Tips</h3>
+            <div className="context-tip-list">
+              {contextualTips.map((tip) => (
+                <p key={tip}>{tip}</p>
+              ))}
+            </div>
           </div>
           <div className="diagnostics">
             <h3>Step Anatomy</h3>
@@ -1100,6 +1729,61 @@ function App() {
                   </select>
                 </label>
 
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={compareMode}
+                    onChange={(event) => setCompareMode(event.target.checked)}
+                    disabled={traceRuns.length < 2}
+                  />
+                  <span>Enable split-screen visual compare</span>
+                </label>
+
+                {compareMode && (
+                  <div className="compare-controls">
+                    <label>
+                      Left Run
+                      <select
+                        value={compareLeftRunId ?? ''}
+                        onChange={(event) => setCompareLeftRunId(event.target.value ? Number(event.target.value) : null)}
+                      >
+                        <option value="">Choose run</option>
+                        {traceRuns.map((run) => (
+                          <option key={`left-${run.id}`} value={run.id}>
+                            {run.summary.timestamp} • {run.summary.language.toUpperCase()} • {run.summary.steps} steps
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
+                      Right Run
+                      <select
+                        value={compareRightRunId ?? ''}
+                        onChange={(event) => setCompareRightRunId(event.target.value ? Number(event.target.value) : null)}
+                      >
+                        <option value="">Choose run</option>
+                        {traceRuns.map((run) => (
+                          <option key={`right-${run.id}`} value={run.id}>
+                            {run.summary.timestamp} • {run.summary.language.toUpperCase()} • {run.summary.steps} steps
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label>
+                      Sync Scrub ({compareScrubPercent}%)
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={compareScrubPercent}
+                        onChange={(event) => setCompareScrub(Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                )}
+
                 {comparisonDelta && (
                   <div className="comparison-grid">
                     <p>Steps delta: {comparisonDelta.steps >= 0 ? `+${comparisonDelta.steps}` : comparisonDelta.steps}</p>
@@ -1147,6 +1831,56 @@ function App() {
               </div>
             ))}
           </div>
+
+          {compareMode && (
+            <div className="viz-group compare-visual-panel">
+              <div className="row event-loop-title">
+                <h3>Split Trace Compare</h3>
+                <span className="phase-chip">sync {compareScrubPercent}%</span>
+              </div>
+              {!compareLeftSnapshot || !compareRightSnapshot ? (
+                <p className="empty">Select both runs in Run Lab to unlock visual compare.</p>
+              ) : (
+                <div className="split-compare-grid">
+                  <article>
+                    <header>
+                      <strong>
+                        Left: {compareLeftRun?.summary.timestamp} • {compareLeftRun?.summary.language.toUpperCase()}
+                      </strong>
+                    </header>
+                    <p>
+                      Step {compareLeftIndex + 1}/{compareLeftRun?.trace.snapshots.length}
+                    </p>
+                    <p>line {compareLeftSnapshot.line}</p>
+                    <p>{compareLeftSnapshot.explanation}</p>
+                    <p>frames: {compareLeftSnapshot.callStack.length}</p>
+                    <p>
+                      queue: {compareLeftSnapshot.eventLoop.microtasks.length} micro /{' '}
+                      {compareLeftSnapshot.eventLoop.macrotasks.length} macro
+                    </p>
+                  </article>
+
+                  <article>
+                    <header>
+                      <strong>
+                        Right: {compareRightRun?.summary.timestamp} • {compareRightRun?.summary.language.toUpperCase()}
+                      </strong>
+                    </header>
+                    <p>
+                      Step {compareRightIndex + 1}/{compareRightRun?.trace.snapshots.length}
+                    </p>
+                    <p>line {compareRightSnapshot.line}</p>
+                    <p>{compareRightSnapshot.explanation}</p>
+                    <p>frames: {compareRightSnapshot.callStack.length}</p>
+                    <p>
+                      queue: {compareRightSnapshot.eventLoop.microtasks.length} micro /{' '}
+                      {compareRightSnapshot.eventLoop.macrotasks.length} macro
+                    </p>
+                  </article>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="viz-group">
             <h3>Execution Profiler</h3>
@@ -1203,6 +1937,36 @@ function App() {
                     </>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+
+          <div className="viz-group function-lanes-panel">
+            <h3>Function Performance Lanes</h3>
+            {!trace ? (
+              <p className="empty">Run code to generate function lane charts.</p>
+            ) : functionLanes.length === 0 ? (
+              <p className="empty">No function activity detected.</p>
+            ) : (
+              <div className="function-lane-list">
+                {functionLanes.map((lane) => (
+                  <article key={lane.name} className="function-lane-card">
+                    <div className="row">
+                      <strong>{lane.name}</strong>
+                      <span>{lane.totalHits} frame hits</span>
+                    </div>
+                    <svg viewBox="0 0 160 34" preserveAspectRatio="none" role="img" aria-label={`${lane.name} sparkline`}>
+                      <polyline points={lane.sparkline} className="lane-line" />
+                    </svg>
+                    <div className="badge-row">
+                      {lane.badges.map((badge) => (
+                        <span key={`${lane.name}-${badge}`} className={`lane-badge badge-${badge}`}>
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  </article>
+                ))}
               </div>
             )}
           </div>

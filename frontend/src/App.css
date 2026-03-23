@@ -5,6 +5,18 @@
   padding: 1.4rem;
   color: #ecf2f8;
   position: relative;
+  animation: shell-in 420ms ease-out;
+}
+
+@keyframes shell-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .app-shell::before,
@@ -50,6 +62,18 @@
     0 30px 80px rgba(1, 9, 18, 0.28);
   position: relative;
   z-index: 1;
+  overflow: hidden;
+}
+
+.app-header::after {
+  content: '';
+  position: absolute;
+  inset: -30% auto auto -10%;
+  width: 52%;
+  height: 140%;
+  transform: rotate(12deg);
+  background: linear-gradient(120deg, rgba(123, 196, 248, 0.08), transparent 56%);
+  pointer-events: none;
 }
 
 .app-header h1 {
@@ -66,6 +90,52 @@
   color: #bfd5e8;
   font-size: 0.98rem;
   line-height: 1.6;
+}
+
+.hero-metrics {
+  margin-top: 0.95rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+  max-width: 44rem;
+}
+
+.hero-metrics article {
+  border: 1px solid rgba(148, 194, 231, 0.22);
+  border-radius: 12px;
+  background: rgba(8, 27, 43, 0.56);
+  padding: 0.5rem 0.6rem;
+}
+
+.hero-metrics p {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.64rem;
+  color: #8db7db;
+}
+
+.hero-metrics strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.95rem;
+}
+
+.hero-progress {
+  margin-top: 0.65rem;
+  max-width: 44rem;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(132, 182, 221, 0.24);
+  background: rgba(10, 34, 52, 0.72);
+  overflow: hidden;
+}
+
+.hero-progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #51a0e0, #7ce4d6);
+  box-shadow: 0 0 18px rgba(86, 179, 234, 0.32);
 }
 
 .eyebrow {
@@ -127,6 +197,11 @@
     0 24px 60px rgba(1, 10, 18, 0.24);
   position: relative;
   overflow: hidden;
+  transition: border-color 180ms ease, transform 180ms ease;
+}
+
+.panel:hover {
+  border-color: rgba(156, 198, 243, 0.24);
 }
 
 .panel::before {
@@ -144,6 +219,10 @@
 
 .controls-panel {
   grid-area: controls;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
 }
 
 .visual-panel {
@@ -173,6 +252,109 @@
   border-radius: 999px;
   background: rgba(24, 59, 87, 0.5);
   border: 1px solid rgba(126, 179, 223, 0.14);
+}
+
+.mode-switch {
+  display: inline-flex;
+  gap: 0.45rem;
+  margin-bottom: 0.62rem;
+  padding: 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(126, 179, 223, 0.16);
+  background: rgba(5, 18, 30, 0.64);
+}
+
+.mode-switch button {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cce6ff;
+  padding: 0.45rem 0.8rem;
+}
+
+.mode-switch button.active {
+  background: linear-gradient(130deg, #4ca5e8, #79c4ff);
+  color: #072034;
+  box-shadow: 0 8px 20px rgba(72, 157, 221, 0.25);
+}
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.editor-toolbar button {
+  border: 1px solid rgba(126, 179, 223, 0.18);
+  background: linear-gradient(145deg, #173f63, #0f2f4a);
+  color: #edf7ff;
+}
+
+.editor-toolbar .primary-cta {
+  margin-left: auto;
+  background: linear-gradient(140deg, #2678be, #49a9ea);
+  color: #041726;
+  border-color: rgba(183, 229, 255, 0.42);
+}
+
+.instant-runner {
+  margin-top: 0.8rem;
+  padding: 0.8rem;
+  border-radius: 16px;
+  border: 1px solid rgba(136, 188, 230, 0.18);
+  background: linear-gradient(145deg, rgba(7, 26, 42, 0.82), rgba(8, 23, 38, 0.62));
+}
+
+.instant-runner h3 {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.instant-actions {
+  display: flex;
+  gap: 0.45rem;
+  margin: 0.55rem 0;
+}
+
+.instant-actions button {
+  border: 1px solid rgba(126, 179, 223, 0.2);
+  background: linear-gradient(145deg, #173f63, #0f2f4a);
+  color: #edf7ff;
+}
+
+.status-pill {
+  border-radius: 999px;
+  padding: 0.24rem 0.62rem;
+  font-size: 0.71rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(126, 179, 223, 0.2);
+}
+
+.status-idle {
+  background: rgba(80, 118, 145, 0.28);
+  color: #bdd9ed;
+}
+
+.status-running {
+  background: rgba(67, 141, 197, 0.28);
+  color: #9fd9ff;
+}
+
+.status-success {
+  background: rgba(62, 156, 112, 0.26);
+  color: #99f2c6;
+}
+
+.status-error,
+.status-timeout {
+  background: rgba(186, 101, 76, 0.3);
+  color: #ffc6b5;
+}
+
+.instant-output {
+  max-height: 10rem;
 }
 
 .editor-panel .monaco-editor,
@@ -228,6 +410,63 @@
   color: #f5fbff;
   min-height: 2.9rem;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.state-chip-row {
+  display: flex;
+  gap: 0.45rem;
+  margin-bottom: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.state-chip {
+  border-radius: 999px;
+  border: 1px solid rgba(130, 177, 211, 0.24);
+  padding: 0.24rem 0.6rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(10, 34, 52, 0.7);
+  color: #d6ecff;
+}
+
+.state-chip.secondary {
+  text-transform: none;
+  letter-spacing: 0;
+  color: #9fcaeb;
+}
+
+.state-idle {
+  background: rgba(97, 140, 173, 0.25);
+}
+
+.state-running {
+  background: rgba(75, 167, 120, 0.25);
+  color: #9cf0c2;
+}
+
+.state-paused {
+  background: rgba(204, 159, 86, 0.2);
+  color: #f2d2a2;
+}
+
+.state-completed {
+  background: rgba(77, 167, 144, 0.22);
+  color: #a9f1dd;
+}
+
+.jump-grid {
+  margin-bottom: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.jump-grid button {
+  border: 1px solid rgba(123, 178, 224, 0.14);
+  background: rgba(13, 37, 59, 0.72);
+  color: #cde7ff;
+  min-height: 2.2rem;
 }
 
 .controls-grid button:disabled {
@@ -428,6 +667,11 @@
   border: 1px solid #5f8bae;
   background: #19466b;
   color: #f5fbff;
+}
+
+.watch-item button {
+  min-height: auto;
+  padding: 0.35rem 0.55rem;
 }
 
 .watch-list {
@@ -805,6 +1049,17 @@
     padding: 1rem;
   }
 
+  .hero-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .controls-panel {
+    position: static;
+    top: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
   .watch-item {
     grid-template-columns: 1fr;
   }
@@ -833,7 +1088,22 @@
     grid-template-columns: 1fr;
   }
 
+  .hero-metrics,
+  .jump-grid {
+    grid-template-columns: 1fr;
+  }
+
   .app-header h1 {
     font-size: 1.85rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell,
+  .panel,
+  button,
+  .hero-progress span {
+    animation: none !important;
+    transition: none !important;
   }
 }
