@@ -1106,7 +1106,7 @@ function App() {
     const lineDecorations = [
       ...heatmapDecorations,
       {
-        range: new monacoRef.current.Range(line, 1, line, 1),
+        range: new monacoRef.current!.Range(line, 1, line, 1),
         options: {
           isWholeLine: true,
           className: 'active-execution-line',
@@ -1114,7 +1114,7 @@ function App() {
         },
       },
       ...breakpointLines.map((point) => ({
-        range: new monacoRef.current.Range(point, 1, point, 1),
+        range: new monacoRef.current!.Range(point, 1, point, 1),
         options: {
           isWholeLine: false,
           glyphMarginClassName: 'breakpoint-glyph',

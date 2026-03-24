@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import type { ChangeEvent } from 'react'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -29,15 +30,6 @@ type ClientResponse = {
   headers: Record<string, string>
   durationMs: number
   error?: string
-}
-
-type RequestHistoryEntry = {
-  id: number
-  method: HttpMethod
-  url: string
-  status: number
-  durationMs: number
-  at: string
 }
 
 type VirtualFile = {
@@ -428,6 +420,66 @@ function downloadText(fileName: string, content: string): void {
   URL.revokeObjectURL(url)
 }
 
+type ActivityLog = {
+  id: number
+  timestamp: string
+  action: string
+  detail: string
+  type: 'info' | 'success' | 'error' | 'warning'
+}
+
+type DirectoryNode = {
+  name: string
+  type: 'file' | 'folder'
+  path: string
+  children?: DirectoryNode[]
+}
+
+function buildDirectoryTree(files: VirtualFile[]): DirectoryNode {
+  const root: DirectoryNode = { name: 'project', type: 'folder', path: '/', children: [] }
+
+  files.forEach((file) => {
+    const parts = file.name.split('/').filter(Boolean)
+    let current = root
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      const isLast = i === parts.length - 1
+      const currentPath = parts.slice(0, i + 1).join('/')
+
+      if (isLast) {
+        if (!current.children) {
+          current.children = []
+        }
+        current.children.push({
+          name: part,
+          type: 'file',
+          path: currentPath,
+        })
+      } else {
+        let folder = current.children?.find((child) => child.name === part && child.type === 'folder')
+        if (!folder) {
+          folder = { name: part, type: 'folder', path: currentPath, children: [] }
+          if (!current.children) {
+            current.children = []
+          }
+          current.children.push(folder)
+        }
+        current = folder
+      }
+    }
+  })
+
+  if (root.children) {
+    root.children.sort((a: DirectoryNode, b: DirectoryNode) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+  }
+
+  return root
+}
+
 function NodeApiLab() {
   const [files, setFiles] = useState<VirtualFile[]>(defaultFiles)
   const [activeFileName, setActiveFileName] = useState('server.js')
@@ -439,12 +491,21 @@ function NodeApiLab() {
   const [requestHeaders, setRequestHeaders] = useState(defaultRequestHeaders)
   const [requestBody, setRequestBody] = useState(defaultRequestBody)
   const [response, setResponse] = useState<ClientResponse | null>(null)
-  const [requestHistory, setRequestHistory] = useState<RequestHistoryEntry[]>([])
   const [isSending, setIsSending] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
-  const [projectStatus, setProjectStatus] = useState('')
+  const [activityLog, setActivityLog] = useState<ActivityLog[]>([])
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']))
   const importProjectRef = useRef<HTMLInputElement | null>(null)
   const importFileRef = useRef<HTMLInputElement | null>(null)
+
+  const addActivity = (action: string, detail: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
+    const now = new Date()
+    const timestamp = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    setActivityLog((current) => [
+      { id: Date.now(), timestamp, action, detail, type },
+      ...current.slice(0, 49),
+    ])
+  }
 
   const compiled = useMemo(() => buildRoutesFromFiles(files), [files])
 
@@ -454,18 +515,19 @@ function NodeApiLab() {
 
   const startServer = () => {
     if (compiled.error) {
+      addActivity('ERROR', `Failed to compile: ${compiled.error}`, 'error')
       setServerError(compiled.error)
       setIsServerRunning(false)
       return
     }
 
+    addActivity('SUCCESS', `Started with ${compiled.routes.length} route(s)`, 'success')
     setServerError(null)
-    setProjectStatus('Server booted in browser simulation mode.')
     setIsServerRunning(true)
   }
 
   const stopServer = () => {
-    setProjectStatus('Server stopped.')
+    addActivity('INFO', 'Server stopped', 'info')
     setIsServerRunning(false)
   }
 
@@ -473,6 +535,7 @@ function NodeApiLab() {
     const normalized = ensureJsExtension(normalizeFileName(newFileName || `new-file-${Date.now()}.js`))
 
     if (files.some((file) => file.name === normalized)) {
+      addActivity('ERROR', `File already exists: ${normalized}`, 'error')
       setFileError(`File already exists: ${normalized}`)
       return
     }
@@ -481,7 +544,7 @@ function NodeApiLab() {
     setActiveFileName(normalized)
     setNewFileName('')
     setFileError(null)
-    setProjectStatus(`Created ${normalized}`)
+    addActivity('CREATE', `New file: ${normalized}`, 'success')
   }
 
   const removeActiveFile = () => {
@@ -490,6 +553,7 @@ function NodeApiLab() {
     }
 
     if (activeFile.name === 'server.js') {
+      addActivity('ERROR', 'Cannot delete server.js', 'error')
       setFileError('server.js cannot be deleted. It is the API entry module.')
       return
     }
@@ -497,7 +561,7 @@ function NodeApiLab() {
     const nextFiles = files.filter((file) => file.name !== activeFile.name)
     setFiles(nextFiles)
     setActiveFileName('server.js')
-    setProjectStatus(`Deleted ${activeFile.name}`)
+    addActivity('DELETE', `Deleted: ${activeFile.name}`, 'warning')
   }
 
   const updateActiveFile = (content: string) => {
@@ -524,7 +588,7 @@ function NodeApiLab() {
     }
 
     downloadText('node-api-lab.project.json', JSON.stringify(payload, null, 2))
-    setProjectStatus('Project exported.')
+    addActivity('EXPORT', `Exported project (${files.length} files)`, 'success')
   }
 
   const exportActiveFile = () => {
@@ -533,10 +597,10 @@ function NodeApiLab() {
     }
 
     downloadText(activeFile.name, activeFile.content)
-    setProjectStatus(`Exported ${activeFile.name}`)
+    addActivity('EXPORT', `Exported file: ${activeFile.name}`, 'success')
   }
 
-  const handleProjectImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleProjectImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const picked = event.target.files?.[0]
     if (!picked) {
       return
@@ -545,12 +609,14 @@ function NodeApiLab() {
     const text = await picked.text()
     const parsed = parseJsonSafe(text)
     if (!parsed.ok || typeof parsed.data !== 'object' || !parsed.data) {
+      addActivity('ERROR', `Invalid project file: ${picked.name}`, 'error')
       setFileError('Invalid project file.')
       return
     }
 
     const payload = parsed.data as { files?: unknown }
     if (!Array.isArray(payload.files)) {
+      addActivity('ERROR', 'Project file must contain a files array', 'error')
       setFileError('Project file must contain a files array.')
       return
     }
@@ -575,6 +641,7 @@ function NodeApiLab() {
       .filter((item): item is VirtualFile => item !== null)
 
     if (importedFiles.length === 0) {
+      addActivity('ERROR', 'No valid files found in project', 'error')
       setFileError('No valid files found in project import.')
       return
     }
@@ -590,7 +657,7 @@ function NodeApiLab() {
     setFiles(importedFiles)
     setActiveFileName('server.js')
     setFileError(null)
-    setProjectStatus(`Imported ${importedFiles.length} file(s).`)
+    addActivity('IMPORT', `Imported ${importedFiles.length} file(s)`, 'success')
     event.target.value = ''
   }
 
@@ -606,20 +673,22 @@ function NodeApiLab() {
     setFiles((current) => {
       const exists = current.find((file) => file.name === normalizedName)
       if (!exists) {
+        addActivity('IMPORT', `Imported file: ${normalizedName}`, 'success')
         return [...current, { id: Date.now(), name: normalizedName, content }]
       }
 
+      addActivity('UPDATE', `Updated file: ${normalizedName}`, 'info')
       return current.map((file) => (file.name === normalizedName ? { ...file, content } : file))
     })
 
     setActiveFileName(normalizedName)
     setFileError(null)
-    setProjectStatus(`Imported ${normalizedName}`)
     event.target.value = ''
   }
 
   const sendRequest = async () => {
     if (!isServerRunning) {
+      addActivity('ERROR', 'Server not running', 'error')
       setResponse({
         ok: false,
         status: 503,
@@ -638,6 +707,7 @@ function NodeApiLab() {
       parsedHeaders.data === null ||
       Array.isArray(parsedHeaders.data)
     ) {
+      addActivity('ERROR', 'Invalid request headers', 'error')
       setResponse({
         ok: false,
         status: 400,
@@ -651,6 +721,7 @@ function NodeApiLab() {
 
     const parsedBody = parseJsonSafe(requestBody)
     if (!parsedBody.ok) {
+      addActivity('ERROR', 'Invalid request body', 'error')
       setResponse({
         ok: false,
         status: 400,
@@ -662,6 +733,7 @@ function NodeApiLab() {
       return
     }
 
+    addActivity('REQUEST', `${method} ${requestUrl}`, 'info')
     setIsSending(true)
     const result = await executeRequest(
       compiled.routes,
@@ -675,18 +747,48 @@ function NodeApiLab() {
     setIsSending(false)
     setResponse(result)
 
-    setRequestHistory((current) =>
-      [
-        {
-          id: Date.now(),
-          method,
-          url: requestUrl,
-          status: result.status,
-          durationMs: result.durationMs,
-          at: new Date().toLocaleTimeString(),
-        },
-        ...current,
-      ].slice(0, 14),
+    const statusColor = result.ok ? 'success' : 'error'
+    addActivity('RESPONSE', `${result.status} (${result.durationMs}ms)`, statusColor)
+  }
+
+  const directoryTree = useMemo(() => buildDirectoryTree(files), [files])
+
+  const renderDirectoryNode = (node: DirectoryNode, depth: number = 0): React.ReactNode => {
+    if (node.type === 'folder') {
+      const isExpanded = expandedFolders.has(node.path || 'root')
+      const toggleExpand = () => {
+        const newExpanded = new Set(expandedFolders)
+        if (isExpanded) {
+          newExpanded.delete(node.path || 'root')
+        } else {
+          newExpanded.add(node.path || 'root')
+        }
+        setExpandedFolders(newExpanded)
+      }
+
+      return (
+        <div key={node.path} style={{ paddingLeft: `${depth * 16}px` }}>
+          <button className="node-dir-button" onClick={toggleExpand}>
+            <span className="node-dir-icon">{isExpanded ? '📂' : '📁'}</span>
+            <span>{node.name}</span>
+          </button>
+          {isExpanded && node.children && (
+            <div className="node-dir-children">{node.children.map((child) => renderDirectoryNode(child, depth + 1))}</div>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <button
+        key={node.path}
+        className={`node-file-button ${activeFile?.name === node.path ? 'active' : ''}`}
+        onClick={() => setActiveFileName(node.path)}
+        style={{ paddingLeft: `${depth * 16}px` }}
+      >
+        <span className="node-file-icon">📄</span>
+        <span>{node.name}</span>
+      </button>
     )
   }
 
@@ -694,7 +796,7 @@ function NodeApiLab() {
     <section className="node-api-lab panel">
       <div className="panel-title">
         <h2>Node.js Browser API Lab</h2>
-        <span>Multi-file project + import/export + REST testing</span>
+        <span>Real directory + file tree + activity log</span>
       </div>
 
       <input ref={importProjectRef} type="file" accept="application/json" hidden onChange={handleProjectImport} />
@@ -703,10 +805,10 @@ function NodeApiLab() {
       <div className="node-api-topbar">
         <div className="row">
           <span className={`status-pill ${isServerRunning ? 'status-success' : 'status-idle'}`}>
-            {isServerRunning ? 'SERVER RUNNING' : 'SERVER STOPPED'}
+            {isServerRunning ? '▶ SERVER RUNNING' : '⏹ SERVER STOPPED'}
           </span>
-          <span className="small">Routes: {compiled.routes.length}</span>
-          <span className="small">Files: {files.length}</span>
+          <span className="small">📍 Routes: {compiled.routes.length}</span>
+          <span className="small">📁 Files: {files.length}</span>
         </div>
         <div className="node-api-actions">
           <button onClick={startServer}>Start Server</button>
@@ -720,7 +822,8 @@ function NodeApiLab() {
               setFiles(defaultFiles)
               setActiveFileName('server.js')
               setFileError(null)
-              setProjectStatus('Reset to starter project.')
+              setActivityLog([])
+              addActivity('RESET', 'Project reset to starter template', 'info')
             }}
           >
             Reset
@@ -730,13 +833,12 @@ function NodeApiLab() {
 
       {serverError ? <p className="watch-error">Route compile error: {serverError}</p> : null}
       {fileError ? <p className="watch-error">{fileError}</p> : null}
-      {projectStatus ? <p className="small">{projectStatus}</p> : null}
 
-      <div className="node-api-grid">
-        <div className="node-editor">
-          <div className="row">
-            <h3>Project Files</h3>
-            <span className="small">Entry file: server.js</span>
+      <div className="node-api-layout">
+        <div className="node-file-explorer">
+          <div className="explorer-header">
+            <h3>📁 Project Files</h3>
+            <span className="small">Entry: server.js</span>
           </div>
 
           <div className="node-file-create">
@@ -744,28 +846,24 @@ function NodeApiLab() {
               type="text"
               value={newFileName}
               onChange={(event) => setNewFileName(event.target.value)}
-              placeholder="routes/orders.js"
+              placeholder="routes/users.js"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') createFile()
+              }}
             />
-            <button onClick={createFile}>Create File</button>
+            <button onClick={createFile}>New</button>
             <button onClick={removeActiveFile} disabled={!activeFile || activeFile.name === 'server.js'}>
-              Delete Active
+              Delete
             </button>
           </div>
 
-          <div className="node-file-list">
-            {files.map((file) => (
-              <button
-                key={file.id}
-                className={activeFile?.name === file.name ? 'active' : ''}
-                onClick={() => setActiveFileName(file.name)}
-              >
-                {file.name}
-              </button>
-            ))}
-          </div>
+          <div className="node-directory-tree">{renderDirectoryNode(directoryTree)}</div>
+        </div>
 
-          <div className="row node-file-heading">
-            <h4>{activeFile?.name ?? 'No file selected'}</h4>
+        <div className="node-main-editor">
+          <div className="editor-header">
+            <h4>📝 {activeFile?.name ?? 'No file selected'}</h4>
+            {activeFile && <span className="file-path">path: /{activeFile.name}</span>}
           </div>
 
           <textarea
@@ -776,8 +874,11 @@ function NodeApiLab() {
           />
         </div>
 
-        <div className="node-client">
-          <h3>REST Client + Endpoint Catalog</h3>
+        <div className="node-api-panel">
+          <div className="panel-header">
+            <h3>🔌 REST Client</h3>
+          </div>
+
           <div className="node-client-row">
             <select value={method} onChange={(event) => setMethod(event.target.value as HttpMethod)}>
               <option value="GET">GET</option>
@@ -790,7 +891,7 @@ function NodeApiLab() {
               type="text"
               value={requestUrl}
               onChange={(event) => setRequestUrl(event.target.value)}
-              placeholder="/users/1?expand=true"
+              placeholder="/users/1"
             />
             <button onClick={() => void sendRequest()} disabled={isSending}>
               {isSending ? 'Sending...' : 'Send'}
@@ -798,9 +899,9 @@ function NodeApiLab() {
           </div>
 
           <div className="node-route-catalog">
-            <h4>Registered Endpoints</h4>
+            <h4>📍 Endpoints ({compiled.routes.length})</h4>
             {compiled.routes.length === 0 ? (
-              <p className="empty">No routes compiled yet.</p>
+              <p className="empty">No routes. Start server first.</p>
             ) : (
               compiled.routes.map((route, index) => (
                 <button
@@ -810,7 +911,7 @@ function NodeApiLab() {
                     setRequestUrl(suggestedUrl(route.path))
                   }}
                 >
-                  <span className="status-pill">{route.method}</span>
+                  <span className={`status-pill method-${route.method.toLowerCase()}`}>{route.method}</span>
                   <span>{route.path}</span>
                 </button>
               ))
@@ -818,68 +919,60 @@ function NodeApiLab() {
           </div>
 
           <label>
-            Headers (JSON)
+            Headers
             <textarea
               className="node-json-input"
               value={requestHeaders}
               onChange={(event) => setRequestHeaders(event.target.value)}
               spellCheck={false}
+              placeholder='{}'
             />
           </label>
 
           <label>
-            Body (JSON)
+            Body
             <textarea
               className="node-json-input"
               value={requestBody}
               onChange={(event) => setRequestBody(event.target.value)}
               spellCheck={false}
+              placeholder='{}'
             />
           </label>
 
-          <div className="node-response">
-            <div className="row">
-              <h4>Response</h4>
-              {response ? (
-                <span className={`status-pill ${response.ok ? 'status-success' : 'status-error'}`}>Status {response.status}</span>
-              ) : null}
+          {response && (
+            <div className="node-response">
+              <div className="row">
+                <h4>Response</h4>
+                <span className={`status-pill ${response.ok ? 'status-success' : 'status-error'}`}>
+                  {response.status}
+                </span>
+              </div>
+              {response.error ? <p className="watch-error">{response.error}</p> : null}
+              <p className="small">⏱ {response.durationMs}ms</p>
+              <pre>{formatUnknown(response.body)}</pre>
             </div>
-            {!response ? (
-              <p className="empty">Send a request to view response payload.</p>
-            ) : (
-              <>
-                {response.error ? <p className="watch-error">{response.error}</p> : null}
-                <p className="small">Duration: {response.durationMs}ms</p>
-                <p className="small">Headers: {formatUnknown(response.headers)}</p>
-                <pre>{formatUnknown(response.body)}</pre>
-              </>
-            )}
-          </div>
+          )}
+        </div>
+      </div>
 
-          <div className="node-history">
-            <h4>Request History</h4>
-            {requestHistory.length === 0 ? (
-              <p className="empty">No requests yet.</p>
-            ) : (
-              requestHistory.map((entry) => (
-                <button
-                  key={entry.id}
-                  onClick={() => {
-                    setMethod(entry.method)
-                    setRequestUrl(entry.url)
-                  }}
-                >
-                  <span>{entry.at}</span>
-                  <span>
-                    {entry.method} {entry.url}
-                  </span>
-                  <span>
-                    {entry.status} ({entry.durationMs}ms)
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
+      <div className="node-activity-panel">
+        <div className="activity-header">
+          <h3>📋 Live Activity Log</h3>
+          <span className="small">{activityLog.length} events</span>
+        </div>
+        <div className="activity-list">
+          {activityLog.length === 0 ? (
+            <p className="empty">No activity yet. Create a file or start the server.</p>
+          ) : (
+            activityLog.map((log) => (
+              <div key={log.id} className={`activity-entry activity-${log.type}`}>
+                <span className="activity-time">{log.timestamp}</span>
+                <span className="activity-action">{log.action}</span>
+                <span className="activity-detail">{log.detail}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </section>
@@ -887,3 +980,4 @@ function NodeApiLab() {
 }
 
 export default NodeApiLab
+
