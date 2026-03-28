@@ -2989,3 +2989,168 @@
 .node-api-lab.vscode-lab .activity-detail {
   color: #b6b9be;
 }
+
+.node-api-lab.vscode-lab {
+  padding: 0.6rem;
+}
+
+.node-api-lab.vscode-lab .node-help-text {
+  margin-bottom: 0.55rem;
+  font-size: 0.76rem;
+}
+
+.node-api-lab.vscode-lab .node-vscode-workbench {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  border: 1px solid #2a2a2a;
+  background: #1e1e1e;
+  min-height: 640px;
+}
+
+.node-api-lab.vscode-lab .node-vscode-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.35rem 0;
+  border-right: 1px solid #2a2a2a;
+  background: #333333;
+}
+
+.node-api-lab.vscode-lab .node-vscode-rail button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #a9a9a9;
+}
+
+.node-api-lab.vscode-lab .node-vscode-rail button.active,
+.node-api-lab.vscode-lab .node-vscode-rail button:hover {
+  color: #ffffff;
+  background: #3f3f46;
+  border-color: #4a4a53;
+}
+
+.node-api-lab.vscode-lab .node-vscode-body {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  background: #1e1e1e;
+}
+
+.node-api-lab.vscode-lab .node-api-topbar {
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  border-bottom: 1px solid #2e2e2e;
+  border-radius: 0;
+  padding: 0.5rem 0.6rem;
+  background: #252526;
+}
+
+.node-api-lab.vscode-lab .node-api-actions {
+  gap: 0.35rem;
+}
+
+.node-api-lab.vscode-lab .node-api-actions button,
+.node-api-lab.vscode-lab .node-file-create button,
+.node-api-lab.vscode-lab .node-client-row button {
+  min-height: 28px;
+  padding: 0.26rem 0.62rem;
+  font-size: 0.72rem;
+}
+
+.node-api-lab.vscode-lab .node-api-layout {
+  margin: 0;
+  min-height: 0;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(500px, 1.55fr) minmax(300px, 1fr);
+}
+
+.node-api-lab.vscode-lab .node-file-explorer,
+.node-api-lab.vscode-lab .node-main-editor,
+.node-api-lab.vscode-lab .node-api-panel,
+.node-api-lab.vscode-lab .node-activity-panel,
+.node-api-lab.vscode-lab .node-directory-tree,
+.node-api-lab.vscode-lab .node-route-catalog,
+.node-api-lab.vscode-lab .node-response,
+.node-api-lab.vscode-lab .activity-entry,
+.node-api-lab.vscode-lab .node-code-input,
+.node-api-lab.vscode-lab .node-json-input,
+.node-api-lab.vscode-lab .node-client-row input,
+.node-api-lab.vscode-lab .node-client-row select,
+.node-api-lab.vscode-lab .node-file-create input {
+  border-radius: 0;
+}
+
+.node-api-lab.vscode-lab .explorer-header,
+.node-api-lab.vscode-lab .panel-header,
+.node-api-lab.vscode-lab .editor-header,
+.node-api-lab.vscode-lab .activity-header {
+  padding-bottom: 0.38rem;
+  margin-bottom: 0.42rem;
+}
+
+.node-api-lab.vscode-lab .explorer-header h3,
+.node-api-lab.vscode-lab .panel-header h3,
+.node-api-lab.vscode-lab .activity-header h3,
+.node-api-lab.vscode-lab .editor-header h4 {
+  font-size: 0.77rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.node-api-lab.vscode-lab .node-editor-tab {
+  border-radius: 0;
+  border-top: 0;
+  border-left: 0;
+  border-right: 1px solid #3a3a3a;
+  border-bottom: 1px solid #1e1e1e;
+  padding: 0.24rem 0.48rem;
+  background: #1e1e1e;
+}
+
+.node-api-lab.vscode-lab .node-code-input {
+  font-size: 0.78rem;
+  line-height: 1.52;
+}
+
+.node-api-lab.vscode-lab .node-field-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.node-api-lab.vscode-lab .node-activity-panel {
+  margin-top: 0.55rem;
+  max-height: 176px;
+}
+
+.node-api-lab.vscode-lab .activity-entry {
+  padding: 0.32rem 0.45rem;
+}
+
+@media (max-width: 1100px) {
+  .node-api-lab.vscode-lab .node-api-layout {
+    grid-template-columns: minmax(190px, 0.85fr) minmax(0, 1.2fr);
+  }
+
+  .node-api-lab.vscode-lab .node-api-panel {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 820px) {
+  .node-api-lab.vscode-lab .node-vscode-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .node-api-lab.vscode-lab .node-vscode-rail {
+    display: none;
+  }
+
+  .node-api-lab.vscode-lab .node-api-layout {
+    grid-template-columns: 1fr;
+  }
+}
