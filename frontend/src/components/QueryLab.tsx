@@ -796,6 +796,55 @@ function QueryLab() {
     return entries.map(([name, rows]) => ({ name, count: rows.length, sample: rows.slice(0, 3) }))
   }, [queryMode, sqlTables, mongoCollections])
 
+  const totalRows = useMemo(() => {
+    return activePreview.reduce((acc, item) => acc + item.count, 0)
+  }, [activePreview])
+
+  const resultJson = useMemo(() => formatJson(result.rows), [result.rows])
+
+  const setEditorExample = (variant: 'default' | 'filter' | 'mutate') => {
+    if (queryMode === 'postgresql') {
+      if (variant === 'default') {
+        setSqlQuery(defaultSqlQuery)
+        return
+      }
+
+      if (variant === 'filter') {
+        setSqlQuery(`SELECT id, name, city FROM users WHERE city ILIKE '%on%' ORDER BY age DESC LIMIT 10;`)
+        return
+      }
+
+      setSqlQuery(`UPDATE users SET pro = true WHERE age >= 35;\nSELECT id, name, pro FROM users ORDER BY id ASC;`)
+      return
+    }
+
+    if (variant === 'default') {
+      setMongoCommand(defaultMongoCommand)
+      return
+    }
+
+    if (variant === 'filter') {
+      setMongoCommand(`{
+  "action": "find",
+  "collection": "events",
+  "filter": { "type": "login", "success": true },
+  "sort": { "_id": -1 },
+  "limit": 10
+}`)
+      return
+    }
+
+    setMongoCommand(`{
+  "action": "updateMany",
+  "collection": "users",
+  "filter": { "city": "London" },
+  "update": {
+    "$set": { "pro": true },
+    "$inc": { "age": 1 }
+  }
+}`)
+  }
+
   const runQuery = () => {
     try {
       if (queryMode === 'postgresql') {
@@ -880,6 +929,16 @@ function QueryLab() {
         <span>Practice PostgreSQL + MongoDB directly in this UI</span>
       </div>
 
+      <div className="query-lab-intro">
+        <p>Use quick templates, run queries instantly, and inspect live dataset previews without leaving the page.</p>
+        <div className="query-lab-stats">
+          <span>{queryMode === 'postgresql' ? 'SQL Mode' : 'Mongo Mode'}</span>
+          <span>{activePreview.length} sources</span>
+          <span>{totalRows} total rows</span>
+          <span>{result.rows.length} result rows</span>
+        </div>
+      </div>
+
       <div className="query-lab-topbar">
         <div className="mode-switch">
           <button className={queryMode === 'postgresql' ? 'active' : ''} onClick={() => setQueryMode('postgresql')}>
@@ -897,6 +956,18 @@ function QueryLab() {
       <div className="query-lab-grid">
         <div className="query-editor-block">
           <h3>{queryMode === 'postgresql' ? 'SQL Query Editor' : 'Mongo Command Editor'}</h3>
+          <p className="query-section-caption">
+            {queryMode === 'postgresql'
+              ? 'Tip: Separate multiple SQL statements with semicolons.'
+              : 'Tip: Enter valid JSON commands. Start with action = find, then refine filter/sort/limit.'}
+          </p>
+
+          <div className="query-template-row" role="group" aria-label="Load query templates">
+            <button onClick={() => setEditorExample('default')}>Starter</button>
+            <button onClick={() => setEditorExample('filter')}>Filter Example</button>
+            <button onClick={() => setEditorExample('mutate')}>Update Example</button>
+          </div>
+
           <textarea
             className="query-input"
             value={queryMode === 'postgresql' ? sqlQuery : mongoCommand}
@@ -910,20 +981,11 @@ function QueryLab() {
           />
           <div className="instant-actions">
             <button onClick={runQuery}>Run Query</button>
-            <button
-              onClick={() => {
-                if (queryMode === 'postgresql') {
-                  setSqlQuery(defaultSqlQuery)
-                } else {
-                  setMongoCommand(defaultMongoCommand)
-                }
-              }}
-            >
-              Load Example
-            </button>
+            <button onClick={() => setEditorExample('default')}>Load Example</button>
           </div>
 
           <h3>Add Custom Data</h3>
+          <p className="query-section-caption">Paste JSON object or array and append it to any table/collection.</p>
           <div className="query-data-controls">
             <input
               type="text"
@@ -933,17 +995,34 @@ function QueryLab() {
             />
             <button onClick={addJsonData}>Add JSON</button>
           </div>
+          <div className="query-target-chips" role="group" aria-label="Pick target dataset">
+            {activePreview.map((item) => (
+              <button key={item.name} onClick={() => setTargetName(item.name)} className={targetName === item.name ? 'active' : ''}>
+                {item.name}
+              </button>
+            ))}
+          </div>
           <textarea className="query-input small-input" value={dataInput} onChange={(event) => setDataInput(event.target.value)} />
         </div>
 
         <div className="query-output-block">
-          <h3>Query Output</h3>
+          <div className="query-output-head">
+            <h3>Query Output</h3>
+            <button
+              className="report-button"
+              onClick={() => {
+                void navigator.clipboard.writeText(resultJson)
+              }}
+            >
+              Copy JSON
+            </button>
+          </div>
           <div className={`query-result-chip ${result.ok ? 'ok' : 'error'}`}>
             <strong>{result.ok ? 'Success' : 'Error'}</strong>
             <span>{result.message}</span>
             <span>Rows touched: {result.touchedRows}</span>
           </div>
-          <pre className="query-result">{formatJson(result.rows)}</pre>
+          <pre className="query-result">{resultJson}</pre>
 
           <h3>Dataset Browser</h3>
           <div className="dataset-cards">
