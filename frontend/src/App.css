@@ -2005,6 +2005,9 @@
 }
 
 .node-dir-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 18px;
   font-size: 0.95rem;
 }
@@ -2046,8 +2049,21 @@
 }
 
 .node-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 16px;
   font-size: 0.9rem;
+}
+
+.title-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.title-with-icon svg {
+  color: #ffca82;
 }
 
 /* New Layout Structure */
@@ -2755,4 +2771,221 @@
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* VS Code-style Node Lab */
+.node-api-lab.vscode-lab {
+  background: #1e1e1e;
+  border: 1px solid #2d2d30;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+}
+
+.node-api-lab.vscode-lab .panel-title h2 {
+  color: #cccccc;
+  letter-spacing: 0;
+}
+
+.node-api-lab.vscode-lab .panel-title span,
+.node-api-lab.vscode-lab .node-help-text,
+.node-api-lab.vscode-lab .node-section-caption,
+.node-api-lab.vscode-lab .small,
+.node-api-lab.vscode-lab .file-path {
+  color: #9da1a6;
+}
+
+.node-api-lab.vscode-lab .title-with-icon svg,
+.node-api-lab.vscode-lab .node-dir-icon,
+.node-api-lab.vscode-lab .node-file-icon {
+  color: #75beff;
+}
+
+.node-api-lab.vscode-lab .node-api-topbar,
+.node-api-lab.vscode-lab .node-file-explorer,
+.node-api-lab.vscode-lab .node-main-editor,
+.node-api-lab.vscode-lab .node-api-panel,
+.node-api-lab.vscode-lab .node-activity-panel {
+  background: #252526;
+  border: 1px solid #333333;
+  border-radius: 8px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.node-api-lab.vscode-lab .node-api-layout {
+  gap: 0.6rem;
+}
+
+.node-api-lab.vscode-lab .node-workbench-status {
+  gap: 0.6rem;
+}
+
+.node-api-lab.vscode-lab .status-pill {
+  border: 1px solid #3c3c3c;
+  border-radius: 999px;
+  background: #2d2d30;
+  color: #d4d4d4;
+}
+
+.node-api-lab.vscode-lab .status-pill.status-success {
+  border-color: #2f6847;
+  background: rgba(63, 140, 92, 0.14);
+  color: #bce9cd;
+}
+
+.node-api-lab.vscode-lab .status-pill.status-idle {
+  border-color: #565656;
+  background: #313135;
+  color: #c8c8c8;
+}
+
+.node-api-lab.vscode-lab .node-api-actions button,
+.node-api-lab.vscode-lab .node-file-create button,
+.node-api-lab.vscode-lab .node-client-row button {
+  border: 1px solid #3f3f46;
+  background: #0e639c;
+  color: #ffffff;
+  border-radius: 6px;
+  box-shadow: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.node-api-lab.vscode-lab .node-api-actions button:hover,
+.node-api-lab.vscode-lab .node-file-create button:hover,
+.node-api-lab.vscode-lab .node-client-row button:hover:not(:disabled) {
+  background: #1177bb;
+  border-color: #5aa9dd;
+  transform: none;
+}
+
+.node-api-lab.vscode-lab .node-api-actions .action-primary {
+  background: #0e639c;
+  border-color: #3f3f46;
+  color: #ffffff;
+}
+
+.node-api-lab.vscode-lab .node-file-create button:last-child,
+.node-api-lab.vscode-lab .method-delete {
+  background: #71302b;
+  border-color: #8f3f38 !important;
+  color: #ffd7d4;
+}
+
+.node-api-lab.vscode-lab .node-file-create button:last-child:hover:not(:disabled),
+.node-api-lab.vscode-lab .method-delete:hover {
+  background: #8a3c35;
+  box-shadow: none;
+}
+
+.node-api-lab.vscode-lab .explorer-header,
+.node-api-lab.vscode-lab .panel-header,
+.node-api-lab.vscode-lab .editor-header,
+.node-api-lab.vscode-lab .activity-header {
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.node-api-lab.vscode-lab .explorer-header h3,
+.node-api-lab.vscode-lab .panel-header h3,
+.node-api-lab.vscode-lab .activity-header h3,
+.node-api-lab.vscode-lab .editor-header h4 {
+  color: #d4d4d4;
+  text-shadow: none;
+}
+
+.node-api-lab.vscode-lab .node-editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.26rem 0.5rem;
+  border: 1px solid #3a3a3a;
+  border-bottom-color: #1e1e1e;
+  border-radius: 6px 6px 0 0;
+  background: #2d2d30;
+}
+
+.node-api-lab.vscode-lab .node-editor-tab h4 {
+  margin: 0;
+}
+
+.node-api-lab.vscode-lab .node-directory-tree,
+.node-api-lab.vscode-lab .node-route-catalog,
+.node-api-lab.vscode-lab .node-response,
+.node-api-lab.vscode-lab .activity-entry,
+.node-api-lab.vscode-lab .node-code-input,
+.node-api-lab.vscode-lab .node-json-input,
+.node-api-lab.vscode-lab .node-client-row input,
+.node-api-lab.vscode-lab .node-client-row select,
+.node-api-lab.vscode-lab .node-file-create input {
+  background: #1e1e1e;
+  border: 1px solid #3a3a3a;
+  color: #d4d4d4;
+  box-shadow: none;
+}
+
+.node-api-lab.vscode-lab .node-file-create input::placeholder,
+.node-api-lab.vscode-lab .node-client-row input::placeholder {
+  color: #80868d;
+}
+
+.node-api-lab.vscode-lab .node-dir-button,
+.node-api-lab.vscode-lab .node-file-button,
+.node-api-lab.vscode-lab .node-route-catalog button {
+  color: #c5c5c5;
+}
+
+.node-api-lab.vscode-lab .node-dir-button:hover,
+.node-api-lab.vscode-lab .node-file-button:hover,
+.node-api-lab.vscode-lab .node-route-catalog button:hover {
+  background: #2a2d2e;
+  color: #ffffff;
+  box-shadow: none;
+  padding-left: 0.5rem;
+}
+
+.node-api-lab.vscode-lab .node-file-button.active {
+  border-left: 2px solid #007acc;
+  background: #37373d;
+  color: #ffffff;
+  box-shadow: none;
+}
+
+.node-api-lab.vscode-lab .method-get,
+.node-api-lab.vscode-lab .method-post,
+.node-api-lab.vscode-lab .method-put,
+.node-api-lab.vscode-lab .method-patch,
+.node-api-lab.vscode-lab .method-delete {
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.node-api-lab.vscode-lab .method-get {
+  background: rgba(42, 157, 85, 0.14);
+  border-color: rgba(62, 186, 107, 0.45) !important;
+  color: #a3e6bd;
+}
+
+.node-api-lab.vscode-lab .method-post {
+  background: rgba(29, 111, 188, 0.2);
+  border-color: rgba(78, 158, 232, 0.5) !important;
+  color: #b8deff;
+}
+
+.node-api-lab.vscode-lab .method-put,
+.node-api-lab.vscode-lab .method-patch {
+  background: rgba(159, 117, 37, 0.18);
+  border-color: rgba(197, 148, 70, 0.5) !important;
+  color: #ffe0a8;
+}
+
+.node-api-lab.vscode-lab .activity-entry {
+  border-left-width: 2px;
+  border-radius: 4px;
+}
+
+.node-api-lab.vscode-lab .activity-time {
+  color: #8c9198;
+}
+
+.node-api-lab.vscode-lab .activity-detail {
+  color: #b6b9be;
 }
