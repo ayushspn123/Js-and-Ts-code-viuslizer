@@ -122,6 +122,11 @@ function ensureJsExtension(fileName: string): string {
   return fileName.endsWith('.js') ? fileName : `${fileName}.js`
 }
 
+function normalizeFolderPath(rawPath: string): string {
+  const normalized = normalizeFileName(rawPath)
+  return normalized.replace(/\.js$/i, '')
+}
+
 function dirname(path: string): string {
   const normalized = normalizeFileName(path)
   const parts = normalized.split('/')
@@ -435,11 +440,55 @@ type DirectoryNode = {
   children?: DirectoryNode[]
 }
 
-function buildDirectoryTree(files: VirtualFile[]): DirectoryNode {
-  const root: DirectoryNode = { name: 'project', type: 'folder', path: '/', children: [] }
+function collectFolderPathsFromFiles(files: VirtualFile[]): string[] {
+  const folders = new Set<string>()
 
   files.forEach((file) => {
-    const parts = file.name.split('/').filter(Boolean)
+    const parts = normalizeFileName(file.name).split('/').filter(Boolean)
+    parts.slice(0, -1).forEach((_, index) => {
+      folders.add(parts.slice(0, index + 1).join('/'))
+    })
+  })
+
+  return Array.from(folders)
+}
+
+function buildDirectoryTree(files: VirtualFile[], folders: string[]): DirectoryNode {
+  const root: DirectoryNode = { name: 'project', type: 'folder', path: '/', children: [] }
+
+  const allFolders = new Set<string>(folders.map((folder) => normalizeFolderPath(folder)))
+  collectFolderPathsFromFiles(files).forEach((folder) => allFolders.add(folder))
+
+  const ensureFolder = (folderPath: string) => {
+    const parts = folderPath.split('/').filter(Boolean)
+    let current = root
+
+    for (let i = 0; i < parts.length; i += 1) {
+      const part = parts[i]
+      const currentPath = parts.slice(0, i + 1).join('/')
+
+      if (!current.children) {
+        current.children = []
+      }
+
+      let folder = current.children.find((child) => child.name === part && child.type === 'folder')
+      if (!folder) {
+        folder = { name: part, type: 'folder', path: currentPath, children: [] }
+        current.children.push(folder)
+      }
+
+      current = folder
+    }
+  }
+
+  allFolders.forEach((folderPath) => {
+    if (folderPath) {
+      ensureFolder(folderPath)
+    }
+  })
+
+  files.forEach((file) => {
+    const parts = normalizeFileName(file.name).split('/').filter(Boolean)
     let current = root
 
     for (let i = 0; i < parts.length; i++) {
@@ -451,11 +500,14 @@ function buildDirectoryTree(files: VirtualFile[]): DirectoryNode {
         if (!current.children) {
           current.children = []
         }
-        current.children.push({
-          name: part,
-          type: 'file',
-          path: currentPath,
-        })
+        const alreadyExists = current.children.some((child) => child.path === currentPath && child.type === 'file')
+        if (!alreadyExists) {
+          current.children.push({
+            name: part,
+            type: 'file',
+            path: currentPath,
+          })
+        }
       } else {
         let folder = current.children?.find((child) => child.name === part && child.type === 'folder')
         if (!folder) {
@@ -470,11 +522,20 @@ function buildDirectoryTree(files: VirtualFile[]): DirectoryNode {
     }
   })
 
-  if (root.children) {
-    root.children.sort((a: DirectoryNode, b: DirectoryNode) => {
+  const sortNodes = (nodes: DirectoryNode[]) => {
+    nodes.sort((a: DirectoryNode, b: DirectoryNode) => {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
       return a.name.localeCompare(b.name)
     })
+    nodes.forEach((node) => {
+      if (node.children) {
+        sortNodes(node.children)
+      }
+    })
+  }
+
+  if (root.children) {
+    sortNodes(root.children)
   }
 
   return root
@@ -482,8 +543,10 @@ function buildDirectoryTree(files: VirtualFile[]): DirectoryNode {
 
 function NodeApiLab() {
   const [files, setFiles] = useState<VirtualFile[]>(defaultFiles)
+  const [folders, setFolders] = useState<string[]>(() => collectFolderPathsFromFiles(defaultFiles))
   const [activeFileName, setActiveFileName] = useState('server.js')
   const [newFileName, setNewFileName] = useState('')
+  const [newFolderName, setNewFolderName] = useState('')
   const [isServerRunning, setIsServerRunning] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [method, setMethod] = useState<HttpMethod>('GET')
@@ -494,7 +557,7 @@ function NodeApiLab() {
   const [isSending, setIsSending] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
   const [activityLog, setActivityLog] = useState<ActivityLog[]>([])
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']))
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['/']))
   const importProjectRef = useRef<HTMLInputElement | null>(null)
   const importFileRef = useRef<HTMLInputElement | null>(null)
 
@@ -540,11 +603,55 @@ function NodeApiLab() {
       return
     }
 
+    const parentFolders = normalized
+      .split('/')
+      .slice(0, -1)
+      .map((_, index, arr) => arr.slice(0, index + 1).join('/'))
+
+    setFolders((current) => Array.from(new Set([...current, ...parentFolders])))
+    setExpandedFolders((current) => {
+      const next = new Set(current)
+      next.add('/')
+      parentFolders.forEach((folder) => next.add(folder))
+      return next
+    })
     setFiles((current) => [...current, { id: Date.now(), name: normalized, content: '// new module\n' }])
     setActiveFileName(normalized)
     setNewFileName('')
     setFileError(null)
     addActivity('CREATE', `New file: ${normalized}`, 'success')
+  }
+
+  const createFolder = () => {
+    const fallback = `folder-${Date.now()}`
+    const normalized = normalizeFolderPath(newFolderName || fallback)
+
+    if (!normalized) {
+      setFileError('Folder path cannot be empty.')
+      return
+    }
+
+    if (folders.includes(normalized)) {
+      addActivity('WARNING', `Folder already exists: ${normalized}`, 'warning')
+      setFileError(`Folder already exists: ${normalized}`)
+      return
+    }
+
+    const parentFolders = normalized
+      .split('/')
+      .filter(Boolean)
+      .map((_, index, arr) => arr.slice(0, index + 1).join('/'))
+
+    setFolders((current) => Array.from(new Set([...current, ...parentFolders])))
+    setExpandedFolders((current) => {
+      const next = new Set(current)
+      next.add('/')
+      parentFolders.forEach((folder) => next.add(folder))
+      return next
+    })
+    setNewFolderName('')
+    setFileError(null)
+    addActivity('CREATE', `New folder: ${normalized}`, 'success')
   }
 
   const removeActiveFile = () => {
@@ -655,6 +762,8 @@ function NodeApiLab() {
     }
 
     setFiles(importedFiles)
+    setFolders(collectFolderPathsFromFiles(importedFiles))
+    setExpandedFolders(new Set(['/']))
     setActiveFileName('server.js')
     setFileError(null)
     addActivity('IMPORT', `Imported ${importedFiles.length} file(s)`, 'success')
@@ -679,6 +788,18 @@ function NodeApiLab() {
 
       addActivity('UPDATE', `Updated file: ${normalizedName}`, 'info')
       return current.map((file) => (file.name === normalizedName ? { ...file, content } : file))
+    })
+
+    const parentFolders = normalizedName
+      .split('/')
+      .slice(0, -1)
+      .map((_, index, arr) => arr.slice(0, index + 1).join('/'))
+    setFolders((current) => Array.from(new Set([...current, ...parentFolders])))
+    setExpandedFolders((current) => {
+      const next = new Set(current)
+      next.add('/')
+      parentFolders.forEach((folder) => next.add(folder))
+      return next
     })
 
     setActiveFileName(normalizedName)
@@ -751,17 +872,18 @@ function NodeApiLab() {
     addActivity('RESPONSE', `${result.status} (${result.durationMs}ms)`, statusColor)
   }
 
-  const directoryTree = useMemo(() => buildDirectoryTree(files), [files])
+  const directoryTree = useMemo(() => buildDirectoryTree(files, folders), [files, folders])
 
   const renderDirectoryNode = (node: DirectoryNode, depth: number = 0): React.ReactNode => {
     if (node.type === 'folder') {
-      const isExpanded = expandedFolders.has(node.path || 'root')
+      const nodeKey = node.path || '/'
+      const isExpanded = expandedFolders.has(nodeKey)
       const toggleExpand = () => {
         const newExpanded = new Set(expandedFolders)
         if (isExpanded) {
-          newExpanded.delete(node.path || 'root')
+          newExpanded.delete(nodeKey)
         } else {
-          newExpanded.add(node.path || 'root')
+          newExpanded.add(nodeKey)
         }
         setExpandedFolders(newExpanded)
       }
@@ -769,6 +891,7 @@ function NodeApiLab() {
       return (
         <div key={node.path} style={{ paddingLeft: `${depth * 16}px` }}>
           <button className="node-dir-button" onClick={toggleExpand}>
+            <span className="node-dir-caret">{isExpanded ? '▾' : '▸'}</span>
             <span className="node-dir-icon">{isExpanded ? '📂' : '📁'}</span>
             <span>{node.name}</span>
           </button>
@@ -796,7 +919,7 @@ function NodeApiLab() {
     <section className="node-api-lab panel">
       <div className="panel-title">
         <h2>Node.js Browser API Lab</h2>
-        <span>Real directory + file tree + activity log</span>
+        <span>VS Code-style file explorer + live API runner</span>
       </div>
 
       <input ref={importProjectRef} type="file" accept="application/json" hidden onChange={handleProjectImport} />
@@ -837,7 +960,7 @@ function NodeApiLab() {
       <div className="node-api-layout">
         <div className="node-file-explorer">
           <div className="explorer-header">
-            <h3>📁 Project Files</h3>
+            <h3>EXPLORER</h3>
             <span className="small">Entry: server.js</span>
           </div>
 
@@ -851,13 +974,28 @@ function NodeApiLab() {
                 if (e.key === 'Enter') createFile()
               }}
             />
-            <button onClick={createFile}>New</button>
-            <button onClick={removeActiveFile} disabled={!activeFile || activeFile.name === 'server.js'}>
+            <button className="create-file" onClick={createFile}>New</button>
+            <button className="create-folder" onClick={createFolder}>Folder</button>
+            <button className="delete-file" onClick={removeActiveFile} disabled={!activeFile || activeFile.name === 'server.js'}>
               Delete
             </button>
           </div>
 
-          <div className="node-directory-tree">{renderDirectoryNode(directoryTree)}</div>
+          <div className="node-file-create node-folder-create">
+            <input
+              type="text"
+              value={newFolderName}
+              onChange={(event) => setNewFolderName(event.target.value)}
+              placeholder="routes/v1"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') createFolder()
+              }}
+            />
+            <button className="create-folder" onClick={createFolder}>New Folder</button>
+            <span className="small">Tip: use / for nested folders</span>
+          </div>
+
+          <div className="node-directory-tree">{directoryTree.children?.map((node) => renderDirectoryNode(node, 0))}</div>
         </div>
 
         <div className="node-main-editor">
@@ -898,6 +1036,8 @@ function NodeApiLab() {
             </button>
           </div>
 
+                setFolders(collectFolderPathsFromFiles(defaultFiles))
+                setExpandedFolders(new Set(['/']))
           <div className="node-route-catalog">
             <h4>📍 Endpoints ({compiled.routes.length})</h4>
             {compiled.routes.length === 0 ? (
